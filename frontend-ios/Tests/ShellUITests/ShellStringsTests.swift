@@ -18,7 +18,6 @@ import Testing
         "Controller": ["de", "it"],
         "Handheld": ["de"],
         "Interface": ["fr"],
-        "Mods": ["de", "fr"],
         "Layout": ["sv"],
         "Portrait": ["fr"],
         "Upscaling": ["it"],
