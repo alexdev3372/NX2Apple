@@ -1,0 +1,227 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex <291639929+alexdev3372@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:42:05 -0800
+Subject: [PATCH] audio: reclaim shell outputs after guest threads park
+
+Upstream-Status: pending
+Reason: Renderer Close can race bulk AudioUnit disposal during in-game Quit.
+Issue: seedds/nxnative#148
+---
+ dm/host/hle_audio.c            | 23 +++++++---
+ dm/host/hle_lifecycle.c        |  4 +-
+ dm/host/tests/Makefile         |  4 +-
+ dm/host/tests/t_audio_device.c | 78 +++++++++++++++++++++++++++++++---
+ 4 files changed, 95 insertions(+), 14 deletions(-)
+
+diff --git a/dm/host/hle_audio.c b/dm/host/hle_audio.c
+index 67ff83e..cff5bb1 100644
+--- a/dm/host/hle_audio.c
++++ b/dm/host/hle_audio.c
+@@ -461,7 +461,7 @@ static Result au_start_at(void *g, void *lr) {
+     pthread_mutex_lock(&g_aos_lock);
+     int was = atomic_exchange_explicit(&a->state, STATE_STARTED, memory_order_acq_rel);
+     au_note(a, was == STATE_STARTED ? "Start (already playing)" : g_suspended ? "Start (app in the background: the silent sink takes over for now)" : "Start", lr);
+-    if (was != STATE_STARTED) {
++    if (was != STATE_STARTED && g_suspended != 2) {
+         null_start(a); au_request_start(a);
+     }
+     pthread_mutex_unlock(&g_aos_lock);
+@@ -748,7 +748,7 @@ void *dm_pcmout_released(void *k) { return h_au_Released(k); }
+ // The front end calls with 1 on going to background / interruption began, and with 0 on returning to foreground / interruption ended (shouldResume).
+ void dm_audio_suspend(int on) {
+     pthread_mutex_lock(&g_aos_lock);
+-    if (g_suspended != on) {
++    if (g_suspended != 2 && g_suspended != on) {
+         g_suspended = on;
+         for (int i = 0; i < AOMAX; i++) {
+             aout *a = g_aos[i];
+@@ -766,6 +766,7 @@ void dm_audio_suspend(int on) {
+ // The media services were reset (iOS): every AudioUnit is invalid. Create each output's unit again and restart the ones that were playing; the front end has set the audio session up again first
+ void dm_audio_reset(void) {
+     pthread_mutex_lock(&g_aos_lock);
++    if (g_suspended == 2) { pthread_mutex_unlock(&g_aos_lock); return; }
+     for (int i = 0; i < AOMAX; i++) {
+         aout *a = g_aos[i]; if (!a || !a->au) continue;
+         au_halt(a);
+@@ -776,8 +777,9 @@ void dm_audio_reset(void) {
+     LOG("audio outputs set up again after the media services reset");
+     pthread_mutex_unlock(&g_aos_lock);
+ }
+-void dm_audio_stop_all(void) {
+-    aout *stopped[AOMAX] = {0};
++// Stop consuming guest buffers, but leave the output objects and their registry entries
++// alive while guest threads (including the host renderer) can still use or close them.
++void dm_audio_quiesce_for_shell(void) {
+     pthread_t wd_th; int join_wd = 0;
+     pthread_mutex_lock(&g_aos_lock);
+     g_suspended = 2;
+@@ -785,13 +787,22 @@ void dm_audio_stop_all(void) {
+     if (g_wd_on) { wd_th = g_wd_th; g_wd_on = 0; join_wd = 1; }
+     for (int i = 0; i < AOMAX; i++) {
+         aout *a = g_aos[i]; if (!a) continue;
+-        g_aos[i] = NULL;
++        atomic_store_explicit(&a->hold_device, 1, memory_order_release);
++        a->reset_pending = 0;
+         au_halt(a);
+         if (a->backend == BK_NULL) null_stop(a);
+-        stopped[i] = a;
+     }
+     pthread_mutex_unlock(&g_aos_lock);
+     if (join_wd) pthread_join(wd_th, NULL);
++}
++// Once guest callers are parked, reclaim the outputs they did not close themselves.
++void dm_audio_stop_all(void) {
++    dm_audio_quiesce_for_shell();
++    aout *stopped[AOMAX];
++    pthread_mutex_lock(&g_aos_lock);
++    memcpy(stopped, g_aos, sizeof stopped);
++    memset(g_aos, 0, sizeof g_aos);
++    pthread_mutex_unlock(&g_aos_lock);
+     for (int i = 0; i < AOMAX; i++) if (stopped[i]) {
+         aout *a = stopped[i];
+         atomic_store_explicit(&a->notify_run, 0, memory_order_release);
+diff --git a/dm/host/hle_lifecycle.c b/dm/host/hle_lifecycle.c
+index 0794371..3a7933d 100644
+--- a/dm/host/hle_lifecycle.c
++++ b/dm/host/hle_lifecycle.c
+@@ -32,6 +32,7 @@ void dm_term_install(void) {
+     dispatch_resume(g_term_src);
+ }
+ void dm_vsync_stop_all(void);
++void dm_audio_quiesce_for_shell(void);
+ void dm_audio_stop_all(void);
+ void dm_threads_park_all(void);
+ void dm_guest_memory_release(int unmap_as);
+@@ -51,13 +52,14 @@ void dm_host_teardown_for_shell(void) {
+     dm_cheats_exit();
+     dm_vsync_stop_all();
+     dm_audren_stop_all();
+-    dm_audio_stop_all();
++    dm_audio_quiesce_for_shell();
+     dm_movie_stop_all();
+     dm_save_sync_stop();
+     dm_haptics_apple_teardown();
+     dm_guest_clock_wake_teardown();
+     dm_gfx_suspend(1);
+     dm_threads_park_all();
++    dm_audio_stop_all();
+     dm_audren_teardown_post();
+     dm_movie_teardown_post();
+     dm_gfx_teardown();
+diff --git a/dm/host/tests/Makefile b/dm/host/tests/Makefile
+index 12cf958..8593a48 100644
+--- a/dm/host/tests/Makefile
++++ b/dm/host/tests/Makefile
+@@ -177,8 +177,8 @@ $(B)/t_audio_spsc: t_audio_spsc.c ../hle_audio.c ../hle_bigstack.c ../hle.h ../d
+ $(B)/t_audio_stats: t_audio_stats.c ../hle_audio.c ../hle_bigstack.c ../hle.h ../dm.h $(GAME_H) | $(B)
+ 	$(CLANG) -O1 -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_audio_stats.c ../hle_bigstack.c -framework AudioToolbox
+ run: $(B)/t_audio_stats
+-$(B)/t_audio_device: t_audio_device.c ../hle_audio.c ../hle_bigstack.c ../hle.h ../dm.h $(GAME_H) | $(B)
+-	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_audio_device.c ../hle_bigstack.c -framework AudioToolbox
++$(B)/t_audio_device: t_audio_device.c ../hle_audio.c ../hle_bigstack.c ../hle_lifecycle.c ../hle.h ../dm.h $(GAME_H) | $(B)
++	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_audio_device.c ../hle_bigstack.c ../hle_lifecycle.c -framework AudioToolbox
+ .PHONY: audio-device
+ audio-device: $(B)/t_audio_device
+ 	$(B)/t_audio_device
+diff --git a/dm/host/tests/t_audio_device.c b/dm/host/tests/t_audio_device.c
+index f4e6c81..6614735 100644
+--- a/dm/host/tests/t_audio_device.c
++++ b/dm/host/tests/t_audio_device.c
+@@ -125,10 +125,22 @@ static OSStatus mock_dispose(AudioComponentInstance au) {
+ }
+ 
+ uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
+-static struct { const void *key; void *value; } object;
+-void *objmap_get(const void *key) { assert(key == object.key); return object.value; }
+-void objmap_put(const void *key, void *value) { assert(!object.key); object.key = key; object.value = value; }
+-void *objmap_del(const void *key) { assert(key == object.key); void *value = object.value; object.key = NULL; object.value = NULL; return value; }
++static struct { const void *key; void *value; } object, second_object;
++static typeof(object) *mock_slot(const void *key) {
++    assert(key);
++    if (key == object.key) return &object;
++    assert(key == second_object.key);
++    return &second_object;
++}
++void *objmap_get(const void *key) { return mock_slot(key)->value; }
++void objmap_put(const void *key, void *value) {
++    typeof(object) *slot = object.key ? &second_object : &object;
++    assert(!slot->key); *slot = (typeof(object)){key, value};
++}
++void *objmap_del(const void *key) {
++    typeof(object) *slot = mock_slot(key);
++    void *value = slot->value; *slot = (typeof(object)){0}; return value;
++}
+ void hle_signal_system_event(void *g) { (void)g; }
+ void hle_bind_system_event(void *g, int autoclear) { (void)g; (void)autoclear; }
+ module_t *module_of(const void *p) { (void)p; return NULL; }
+@@ -244,6 +256,59 @@ static void blocked_start(void *out) {
+     dispatch_release(start_entered);
+ }
+ 
++// The renderer's own shutdown only requests stop. Drive its final PCM Close at the last
++// possible moment, before the lifecycle's park barrier returns. Use real Close and bulk cleanup.
++static void *shell_pcm, *shell_pcm_silent;
++static int shell_renderer_stopping, shell_releases_memory;
++static unsigned shell_disposals;
++void dm_host_teardown_for_shell(void);
++void dm_cheats_exit(void) {}
++void dm_vsync_stop_all(void) {}
++void dm_audren_stop_all(void) { shell_renderer_stopping = 1; }
++void dm_gfx_suspend(int on) { assert(on); }
++void dm_threads_park_all(void) {
++    assert(shell_renderer_stopping && !shell_releases_memory);
++    assert(unit.disposals == shell_disposals && "shell disposed a live renderer output before parking its thread");
++    void *key = shell_pcm;
++    assert(ao(key)->backend == BK_NONE && ao(shell_pcm_silent)->backend == BK_NONE &&
++           "audio consumer still running at the park barrier");
++    dm_audio_suspend(0);  // A queued session notification must not re-enable audio during teardown.
++    dm_audio_reset();
++    h_au_Stop(key);
++    dm_pcmout_start(key);
++    h_au_Stop(shell_pcm_silent);
++    dm_pcmout_start(shell_pcm_silent);
++    assert(ao(key)->backend == BK_NONE && ao(shell_pcm_silent)->backend == BK_NONE &&
++           unit.disposals == shell_disposals);
++    dm_pcmout_close(shell_pcm_silent);
++    shell_pcm_silent = NULL;
++    dm_pcmout_close(key);
++    shell_pcm = NULL;
++}
++void dm_guest_memory_release(int unmap_as) { assert(unmap_as && !shell_pcm && !shell_pcm_silent); shell_releases_memory = 1; }
++void dm_modules_teardown(void) { assert(shell_releases_memory); }
++void hlecount_flush(void) {}
++void dm_rec_finish(void) {}
++void dm_gfx_quit(int ms) { (void)ms; }
++
++static void shell_return_with_live_renderer(void) {
++    unsigned before = unit.disposals;
++    shell_disposals = before;
++    shell_pcm = dm_pcmout_open(2);
++    // A second live renderer output uses the silent backend; the fake HAL models one unit.
++    setenv("DM_AUDIO", "0", 1);
++    shell_pcm_silent = dm_pcmout_open(2);
++    setenv("DM_AUDIO", "1", 1);
++    dm_audio_suspend(1);  // a renderer may have an active silent sink, even with a real AudioUnit
++    dm_pcmout_start(shell_pcm);
++    dm_pcmout_start(shell_pcm_silent);
++    assert(ao(shell_pcm)->au && !ao(shell_pcm_silent)->au);
++    assert(ao(shell_pcm)->backend == BK_NULL && ao(shell_pcm_silent)->backend == BK_NULL);
++    dm_host_teardown_for_shell();
++    assert(shell_releases_memory && !object.key && !second_object.key && !g_wd_on && unit.disposals == before + 1);
++    g_suspended = 0;
++}
++
+ int main(void) {
+     setenv("DM_AUDIO", "1", 1); unsetenv("DM_DBG_AU_FRAMES");
+     unit.device = 1; unit.rate = 48000; unit.range = (AudioValueRange){15, 4096}; unit.frames = 512;
+@@ -289,6 +354,9 @@ int main(void) {
+     unit.device = 1; unit.rate = 48000; unit.init_error = kAudioUnitErr_FailedInitialization;
+     aout failed = {.ch = 2};
+     assert(au_create(&failed) == kAudioUnitErr_FailedInitialization && !failed.au && unit.disposals == 5);
+-    puts("audio device: buffer configuration, blocked start, callback handoff, retry and lifecycle passed");
++    unit.init_error = noErr;
++    unit.device = 1;
++    shell_return_with_live_renderer();
++    puts("audio device: buffer configuration, blocked start, callback handoff, retry and shell lifecycle passed");
+     return 0;
+ }

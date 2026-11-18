@@ -257,6 +257,70 @@
         }
       }
     },
+    "30 fps (original)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (Original)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (original)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (original)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 i/s (d’origine)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (originale)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps（オリジナル）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps(원본)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (original)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps (ursprunglig bildfrekvens)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 fps（原版）"
+          }
+        }
+      }
+    },
     "60 fps": {
       "localizations": {
         "de": {
@@ -317,6 +381,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "60 fps"
+          }
+        }
+      }
+    },
+    "60 fps (experimental)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (experimentell)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (experimental)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (experimental)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 i/s (expérimental)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (sperimentale)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps（実験的）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps(실험적)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (experimental)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps (experimentellt)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60 fps（实验性）"
           }
         }
       }
@@ -1085,6 +1213,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "需要更新 App"
+          }
+        }
+      }
+    },
+    "Applies on next launch. 60 fps can use more power and lower dynamic resolution. Physics and device performance are unverified.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gilt ab dem nächsten Start. 60 fps können den Stromverbrauch erhöhen und die dynamische Auflösung senken. Physiksimulation und Geräteleistung wurden nicht überprüft."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies on next launch. 60 fps can use more power and lower dynamic resolution. Physics and device performance are unverified."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se aplica al volver a iniciar el juego. A 60 fps, el consumo puede aumentar y la resolución dinámica puede bajar. No se han verificado la física ni el rendimiento del dispositivo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S’applique au prochain lancement. À 60 i/s, la consommation peut augmenter et la résolution dynamique peut baisser. La physique et les performances de l’appareil n’ont pas été vérifiées."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si applica al prossimo avvio. A 60 fps, il consumo energetico può aumentare e la risoluzione dinamica può diminuire. La fisica e le prestazioni del dispositivo non sono state verificate."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次回起動時に適用されます。60 fps では消費電力が増え、動的解像度が低下する場合があります。物理演算と端末での性能は未検証です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음 실행부터 적용됩니다. 60 fps에서는 전력 소비가 늘고 동적 해상도가 낮아질 수 있습니다. 물리 시뮬레이션과 기기 성능은 검증되지 않았습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entra em vigor na próxima inicialização. A 60 fps, o consumo de energia pode aumentar e a resolução dinâmica pode diminuir. A física e o desempenho do dispositivo não foram verificados."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gäller från nästa start. Vid 60 fps kan strömförbrukningen öka och den dynamiska upplösningen sjunka. Fysiksimuleringen och enhetens prestanda har inte verifierats."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下次启动时生效。60 fps 可能增加功耗并降低动态分辨率。物理模拟和设备性能尚未验证。"
           }
         }
       }

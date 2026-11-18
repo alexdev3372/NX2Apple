@@ -1,0 +1,523 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex <291639929+alexdev3372@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:42:29 -0800
+Subject: [PATCH] nvn: support bounded overlapping linear texture rows and
+ retire timestamp reports
+
+Upstream-Status: pending
+Reason: Short-pitch textures abort Skyrim New Game and timestamp reports can stall movie startup.
+Issue: seedds/nxnative#148
+---
+ dm/gfx/nvn/nvn_hle_fallback.c           |   4 +
+ dm/gfx/nvn/nvn_mtl.m                    |  97 ++++++++++--
+ dm/gfx/tests/Makefile                   |   3 +
+ dm/gfx/tests/t_counter_clock.m          |  16 ++
+ dm/gfx/tests/t_linear_short_stride.m    | 191 ++++++++++++++++++++++++
+ dm/gfx/tests/t_nvn.c                    |   2 +-
+ dm/gfx/tests/t_render_counter_overlap.m |   8 +-
+ 7 files changed, 302 insertions(+), 19 deletions(-)
+ create mode 100644 dm/gfx/nvn/nvn_hle_fallback.c
+ create mode 100644 dm/gfx/tests/t_linear_short_stride.m
+
+diff --git a/dm/gfx/nvn/nvn_hle_fallback.c b/dm/gfx/nvn/nvn_hle_fallback.c
+new file mode 100644
+index 0000000..3b1f4b0
+--- /dev/null
++++ b/dm/gfx/nvn/nvn_hle_fallback.c
+@@ -0,0 +1,4 @@
++// Standalone graphics fixtures need a no-op when the NVN HLE layer is absent.
++// Keep this definition outside nvn_mtl.m so a fixture can include both implementations;
++// the real HLE teardown overrides this weak fallback when it is linked.
++__attribute__((weak)) void nvn_hle_teardown(void) {}
+diff --git a/dm/gfx/nvn/nvn_mtl.m b/dm/gfx/nvn/nvn_mtl.m
+index db3e96c..841f57c 100644
+--- a/dm/gfx/nvn/nvn_mtl.m
++++ b/dm/gfx/nvn/nvn_mtl.m
+@@ -2415,7 +2415,7 @@ static void post_run(post_rec *r, uint64_t c0, uint64_t c1) {
+             for (int k = 0; k < l->n; k++) { g_vis_acc += ((const uint64_t *)((__bridge id<MTLBuffer>)l->s[k].buf).contents)[l->s[k].slot]; CFRelease(l->s[k].buf); }
+             free(l); if (ops[i].mode == VIS_REPORT) { uint64_t rec[2] = {g_vis_acc, gpu_ticks()}; memcpy((void *)ops[i].addr, rec, sizeof rec); }
+         }
+-        else { uint64_t t = rep_ticks(&ops[i], sc, seg_last, c0, c1), rec[2] = {(ops[i].type == 0 || ops[i].type == 0x10) && !dm_prof()->render_cond ? t : 0, t}; memcpy((void *)ops[i].addr, rec, sizeof rec); }   // render_cond: a timestamp report's counter field is 0, as on the GPU (see rc_value)
++        else { uint64_t t = rep_ticks(&ops[i], sc, seg_last, c0, c1), rec[2] = {0, t}; memcpy((void *)ops[i].addr, rec, sizeof rec); }   // Timestamp reports retire the counter word to 0 for every profile (see rc_value), independently of conditional rendering.
+     }
+     // Forwarded counter values expire once their CPU-visible reports have landed.
+     // This precedes event publication so a released CPU writer is never hidden by stale knowledge.
+@@ -3399,6 +3399,24 @@ static void up_copy_add(id<MTLTexture> src, MTLSize size, id<MTLTexture> dst, NS
+ static void up_blit_add(id<MTLBuffer> src, size_t off, size_t row, size_t image, MTLSize size,
+                         id<MTLTexture> dst, NSUInteger slice, NSUInteger level) { up_blit_add_at(src, off, row, image, size, dst, slice, level, MTLOriginMake(0, 0, 0)); }
+ 
++// NVN keeps the full width and an explicit short pitch independently (retail descriptor), so rows may overlap.
++// Only the Metal sampling copy expands its read/dirty span through the final row, bounded by the owning pool;
++// the NVN object's reported storage size and row advance are never changed. -1: that span has no backing.
++static int linear_sample_copy(const tex_t *t, tex_t *out) {
++    if (!(t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) ||
++        t->d.target != NVN_TEXTURE_TARGET_2D || t->d.levels > 1 || t->d.samples > 1 || !t->mem) return 0;
++    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
++    if (!bpb || bw != 1 || bh != 1) return 0;
++    uint64_t row = tex_linear_row(t), bytes = (uint64_t)MAX(t->d.width, 1u) * bpb, h = MAX(t->d.height, 1u);
++    if (row >= bytes) return 0;
++    if (!row || h - 1 > (UINT64_MAX - bytes) / row) return -1;
++    uint64_t n = MAX(t->L.size, (h - 1) * row + bytes);
++    if (!t->pool || t->pool->magic != MAGIC('P','O','O','L') || !t->pool->mem || t->off < 0 ||
++        (uintptr_t)t->mem < (uintptr_t)t->pool->mem || (uintptr_t)t->mem - (uintptr_t)t->pool->mem != (uint64_t)t->off ||
++        (uint64_t)t->off > t->pool->size || n > t->pool->size - (uint64_t)t->off) return -1;
++    *out = *t; out->L.size = n; return 1;
++}
++
+ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse, MTLTextureUsage keep, id<MTLTexture> prev, const void *span, uint64_t since, unsigned *taken);
+ static int g_direct_upload_on = -1; static uint64_t g_direct_uploads, g_direct_dispatches;
+ static int direct_upload_on(void) { if (g_direct_upload_on < 0) { const char *e=getenv("DM_NVN_DIRECT_UPLOAD"); g_direct_upload_on=!e||atoi(e); } return g_direct_upload_on; }
+@@ -3505,6 +3523,9 @@ static void rb_swap_rows(uint8_t *p, size_t wb, size_t rows, size_t nz, size_t r
+     return need;
+ }
+ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse, MTLTextureUsage keep, id<MTLTexture> prev, const void *span, uint64_t since, unsigned *taken) {
++    tex_t sampled; int short_row = linear_sample_copy(t, &sampled);
++    if (short_row < 0) { RED_ONCE(153, "short-pitch linear texture samples outside its memory pool"); return nil; }
++    if (short_row) t = &sampled;
+     MTLTextureDescriptor *d = tex_desc(t, 1);
+     if (!d) return nil;
+     d.usage |= keep & (MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView);
+@@ -3641,7 +3662,7 @@ static void rb_swap_rows(uint8_t *p, size_t wb, size_t rows, size_t nz, size_t r
+             }
+             if (linear) {   // one 2D level (linear_fit): rows of the storage's stride, the same pitch GetStorageSize counts
+                 size_t srow = tex_linear_row(t);
+-                if (l || y || z != 1 || srow < pitch || srow * rows > t->L.size) { RED_ONCE(153, "linear texture upload: %ux%u format %#x target %d levels %u is not one 2D level of rows (stride %zu)", t->d.width, t->d.height, t->d.format, t->d.target, t->d.levels, srow); break; }
++                if (l || y || z != 1 || !srow || !rows || pitch > t->L.size || rows - 1 > (t->L.size - pitch) / srow) { RED_ONCE(153, "linear texture upload: %ux%u format %#x target %d levels %u is not one 2D level of rows (stride %zu)", t->d.width, t->d.height, t->d.format, t->d.target, t->d.levels, srow); break; }
+                 for (size_t r = 0; r < rows; r++) memcpy((uint8_t *)stg.contents + off + r * pitch, src + r * srow, pitch);
+             } else if (nvn_deswizzle(&t->d, l, y, src, (uint8_t *)stg.contents + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
+             if (rb_shift) rb_swap_rows((uint8_t *)stg.contents + off, pitch, rows, z, pitch, pitch * rows, rb_shift);
+@@ -4104,6 +4125,7 @@ static int linear_fit(const tex_t *t, uint32_t *pf, void **mb, uint64_t *mo, siz
+     uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+     if (!nvn_fmt_to_mtl(t->d.format, pf, swz) || !*pf || !bpb || bw != 1 || bh != 1) return 0;
+     *row = tex_linear_row(t);
++    if (*row < (size_t)MAX(t->d.width, 1u) * bpb) return -1;   // The retail NVN descriptor retains overlapping pitched rows; Metal buffer views cannot.
+     if (!mtl_addr((uint64_t)t->mem, (uint64_t)*row * (t->d.height ? t->d.height : 1), mb, mo)) { RED_ONCE(64, "linear texture storage is not in a memory pool (%ux%u format %#x)", t->d.width, t->d.height, t->d.format); return 0; }
+     NSUInteger al = tbuf_align([g_dev minimumLinearTextureAlignmentForPixelFormat:(MTLPixelFormat)*pf]);
+     if (*mo % al || *row % al) {
+@@ -4621,6 +4643,9 @@ static void sparse_view(NvPkg *pk, const tex_t *t) {
+                                              made ? "keeps its host texture, not refreshed" : "no host texture made", (unsigned long long)n);
+         return made;
+     }
++    tex_t sampled; int short_row = linear_sample_copy(t, &sampled);
++    if (short_row < 0) { RED_ONCE(153, "short-pitch linear texture samples outside its memory pool"); return nil; }
++    if (short_row) t = &sampled;   // includes the sampled tail in upload caching and dirty-page checks, not in NVN storage reporting
+     int packaged = tex_from_storage(t);
+     {   // Diagnostic DM_NVN_TEXINFO=WxH: log storage and description of textures of that size on first resolution (to tell whether two textures share storage and why they were not merged)
+         static int ti = -1; static uint32_t tw, th; static uint64_t last[64]; static int nl;
+@@ -5356,6 +5381,11 @@ static void xv_violation(const xv_ent *e, const char *why) {
+ // Whether what the GPU writes into the texture belongs in its storage
+ static int gsb_target(const tex_t *t) {
+     if (!t || !gsb_on() || !t->mem || !t->pool || t->d.samples > 1 || t->d.target == NVN_TEXTURE_TARGET_BUFFER || t->d.target == NVN_TEXTURE_TARGET_1D_ARRAY) return 0;
++    // A short-pitch linear texture has no Metal buffer view. Copies and clears must write its backing
++    // and then gather the overlapping rows, even when IMAGE or LINEAR_RENDER_TARGET is set.
++    tex_t sampled;
++    int short_row = linear_sample_copy(t, &sampled);
++    if (short_row) return short_row > 0 && !(t->pool->flags & NVN_MEMORY_POOL_FLAGS_VIRTUAL);
+     if (tex_storage_dst(t)) return 1;
+     return tex_storage_ok(t, !fmt_compressed(t->d.format)) && !tex_cpu_written(t->serial);
+ }
+@@ -5393,10 +5423,13 @@ static int gsb_geom(const tex_t *t, unsigned level, unsigned slice, unsigned n,
+     g->tx = (int32_t)bx0 * bw; g->ty = (int32_t)by0 * bh; g->tw = MIN((int32_t)bx1 * bw, lw) - g->tx; g->tth = MIN((int32_t)by1 * bh, lh) - g->ty;
+     g->xb0 = bx0 * (uint32_t)bpb; g->xb1 = bx1 * (uint32_t)bpb; g->by0 = by0; g->rows = by1 - by0;
+     nvn_texlayout L; nvn_tex_layout(&t->d, &L);
+-    if (t->d.flags & NVN_TEXTURE_FLAGS_LINEAR) {   // rows of its stride, one 2D level (as pkg_upload_ reads them)
++    if (t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) {   // rows of its stride, one 2D level (as pkg_upload_ reads them)
+         if (t->d.target != NVN_TEXTURE_TARGET_2D || level || slice || n != 1 || bw != 1 || bh != 1 || !t->d.height) return -1;
++        tex_t sampled; int short_row = linear_sample_copy(t, &sampled);
++        if (short_row < 0) return -1;
++        if (short_row) t = &sampled;
+         size_t srow = tex_linear_row(t);
+-        if (g->xb1 > srow || (size_t)by1 * srow > t->L.size || srow > UINT32_MAX) return -1;
++        if (!srow || srow > UINT32_MAX || g->xb1 > t->L.size || by1 - 1 > (t->L.size - g->xb1) / srow) return -1;
+         g->lin = (uint32_t)srow; return 0;
+     }
+     uint32_t row, rows, slices, gbpb; unsigned th, td;
+@@ -5409,6 +5442,9 @@ static int gsb_geom(const tex_t *t, unsigned level, unsigned slice, unsigned n,
+ }
+ // The swizzle into the storage: src the GPU address of the linear region's first image at column xb0 & ~15 (rows pitch apart, images img apart)
+ static void gsb_swz(const tex_t *t, const gsb_geo *g, unsigned n, uint64_t src, size_t pitch, size_t img) {
++    tex_t sampled; int short_row = linear_sample_copy(t, &sampled);
++    if (short_row < 0) { RED_ONCE(153, "short-pitch linear texture samples outside its memory pool"); return; }
++    if (short_row) t = &sampled;   // the store's mapping and GPU edge buffer cover the same bounded span cached at upload
+     static id<MTLComputePipelineState> ps; static int failed;
+     if (failed) return;
+     if (!ps) {
+@@ -5418,17 +5454,42 @@ static void gsb_swz(const tex_t *t, const gsb_geo *g, unsigned n, uint64_t src,
+     }
+     void *pb; uint64_t po, pg;
+     if (!mtl_gpu_addr((uint64_t)(uintptr_t)t->mem, t->L.size, &pb, &po, &pg)) return;
+-    id<MTLBuffer> qb; size_t qo = arena_alloc(128, &qb);
+     __unsafe_unretained id o = tex_get(t->serial); NvPkg *pk = [o isKindOfClass:[NvPkg class]] ? o : nil;
+     uint64_t e0n, e1s, e1n; id<MTLBuffer> eb = pkg_edges_gpu(pk, t, &e0n, &e1s, &e1n);
+-    struct { uint64_t src_off, dst_off, base, pitch, img, layer_stride, e0n, e1s, e1n; uint32_t x0, x1, y0, rows, th, gobs_x, gob2, td, z0, blocks_y, d3, lin; } *p = (void *)((uint8_t *)qb.contents + qo);
+-    _Static_assert(sizeof *p <= 128, "the swz parameters fit their arena slot");
+-    *p = (typeof(*p)){0, 0, g->base, pitch, img, g->layer_stride, e0n, e1s, e1n, g->xb0, g->xb1, g->by0, g->rows, g->th, g->gobs_x, (uint32_t)nvn_gob_switch2, g->td, g->z0, g->blocks_y, g->d3, g->lin};
+     g_wr_epoch++; g_mdx_epoch++; sbw_note((uint64_t)(uintptr_t)t->mem, t->L.size, SBW_GPU);
+-    id<MTL4ComputeCommandEncoder> e = dispatch_enc(); enc_c_pso(e, ps);
+-    enc_c_args(e, src, 0); enc_c_args(e, pg, 1); enc_c_args(e, qb.gpuAddress + qo, 2); enc_c_args(e, eb ? eb.gpuAddress : pg, 3);
+     uint32_t nx = (g->xb1 - (g->xb0 & ~15u) + 15) / 16;
+-    enc_c_dispatch(e, MTLSizeMake((nx + 31) / 32, g->rows, n), MTLSizeMake(32, 1, 1));
++    // Overlapping destination rows cannot be parallel swz invocations. Give each its own immutable parameters
++    // and dispatch barrier, in source-row order; ordinary disjoint regions keep the single dispatch.
++    int serial_rows = g->lin && g->xb1 - g->xb0 > g->lin;
++    for (uint32_t y = 0; y < (serial_rows ? g->rows : 1); y++) {
++        id<MTLBuffer> qb; size_t qo = arena_alloc(128, &qb);
++        struct { uint64_t src_off, dst_off, base, pitch, img, layer_stride, e0n, e1s, e1n; uint32_t x0, x1, y0, rows, th, gobs_x, gob2, td, z0, blocks_y, d3, lin; } *p = (void *)((uint8_t *)qb.contents + qo);
++        _Static_assert(sizeof *p <= 128, "the swz parameters fit their arena slot");
++        *p = (typeof(*p)){y * pitch, 0, g->base, pitch, img, g->layer_stride, e0n, e1s, e1n, g->xb0, g->xb1, g->by0 + y, serial_rows ? 1 : g->rows, g->th, g->gobs_x, (uint32_t)nvn_gob_switch2, g->td, g->z0, g->blocks_y, g->d3, g->lin};
++        id<MTL4ComputeCommandEncoder> e = dispatch_enc(); enc_c_pso(e, ps);
++        enc_c_args(e, src, 0); enc_c_args(e, pg, 1); enc_c_args(e, qb.gpuAddress + qo, 2); enc_c_args(e, eb ? eb.gpuAddress : pg, 3);
++        enc_c_dispatch(e, MTLSizeMake((nx + 31) / 32, serial_rows ? 1 : g->rows, n), MTLSizeMake(32, 1, 1));
++    }
++    if (short_row) {
++        // Short-pitch LINEAR storage is authoritative; the private texture is only its coherent sampling copy.
++        // A rectangle's stored bytes may also name texels outside that rectangle. Re-read every logical row
++        // from the GPU backing after the store, before any later read (including gsb_held's same-buffer path).
++        // Never snapshot the in-flight backing on the CPU or put this in the earlier-running upload batch.
++        id<MTLTexture> mt = tex_made(t);
++        if (gsb_host_ok(t, mt)) {
++            id<MTLBuffer> sb = (__bridge id<MTLBuffer>)pb; size_t so = po, row = tex_linear_row(t);
++            size_t bytes = (size_t)mt.width * g->bpb, rows = mt.height;
++            int shift = rb_copy_shift(t, mt);
++            if (shift) {   // backing has guest bits; the sampling copy has Metal's packed-channel order
++                id<MTLBuffer> ab; size_t ao = arena_alloc(bytes * rows, &ab);
++                if (!rb_swap_gpu(pg, row, row * rows, ab.gpuAddress + ao, bytes, bytes * rows, bytes, rows, 1, shift)) return;
++                sb = ab; so = ao; row = bytes;
++            }
++            id<MTL4ComputeCommandEncoder> b = blit();   // orders the backing store / conversion before these reads
++            for (size_t y = 0; y < rows; y++)
++                enc_b_copy_buffer_texture(b, sb, so + y * row, bytes, bytes, MTLSizeMake(mt.width, 1, 1), mt, 0, 0, MTLOriginMake(0, y, 0));
++        }
++    }
+     gsb_hold(t->serial);
+     if (pk) pk->stored++;
+     g_gsb_bytes += (uint64_t)(g->xb1 - g->xb0) * g->rows * n;
+@@ -6780,6 +6841,7 @@ static MTLPixelFormat tbuf_view_format(MTLPixelFormat pf, int dpf) {
+ static void treg_gone(treg_t *r) {
+     if (!r->gone) reg_bump((int)(r - g_treg), 0);   // its pool table entries become the dummy: the tables take the ID again (pool_gpu)
+     r->gone = 1;
++    r->view_pkg = 0; r->view_span = NULL; r->view_stamp = 0;   // retained host content is safe; its finalized backing is not
+     if (r->view) { defer_obj_unref((__bridge id)r->view); CFRelease(r->view); r->view = NULL; r->view_id = r->view_rid = 0; treg_drop_im(r); }
+     treg_drop_stand(r);
+ }
+@@ -6898,7 +6960,7 @@ static MTLTextureType ttype(int target, int fallback) {
+ static id<MTLTexture> treg_tex(const treg_t *r) { return r->gone ? tex_made(&r->t) : tex_mtl(&r->t); }   // Caller holds g_rmu
+ // The upload stamp of the packaged texture an ID's view was made from (tex_by_id's guest-write shortcut); none for sparse ones (their page table changes too) or another base. Caller holds g_rmu
+ static void treg_pkg_stamp(treg_t *rp, id<MTLTexture> base) {
+-    rp->view_span = NULL; if (!rp->view_pkg) return;
++    rp->view_span = NULL; if (rp->gone || !rp->view_pkg) return;   // g_rmu owns a live registration, never a gone pool object
+     id h = tex_get(rp->t.serial); NvPkg *pk = [h isKindOfClass:[NvPkg class]] ? h : nil;
+     if (pk && !pk->sparse && pk->span && pk->tex == base) { rp->view_span = pk->span; rp->view_stamp = pk->stamp; }
+ }
+@@ -6933,11 +6995,15 @@ static int treg_swizzle(const treg_t *r, MTLPixelFormat base_pf, int in_place, u
+     uint64_t sg = treg_ep(), dg = nvn_dirty_now();   // Take the generations first and then look up: if a change happens in between, the next time must take the slow path
+     if (rp->view && rp->view_ser == sg && (!rp->view_pkg || rp->view_dirty == dg)) return (__bridge id<MTLTexture>)rp->view;
+     // A packaged texture whose pages nobody wrote since its upload stamp is what tex_mtl_ would find clean (the same test): keep the view without the serial table lookup
+-    if (rp->view && rp->view_ser == sg && rp->view_span && !nvn_dirty_since_span(rp->view_span, rp->t.mem, rp->t.L.size, rp->view_stamp)) { rp->view_dirty = dg; return (__bridge id<MTLTexture>)rp->view; }
++    if (!rp->gone && rp->view && rp->view_ser == sg && rp->view_span) {
++        tex_t sampled; int short_row = linear_sample_copy(&rp->t, &sampled);
++        uint64_t size = short_row > 0 ? sampled.L.size : rp->t.L.size;   // the same bounded sampled span tex_mtl_ checks, not the public storage size
++        if (short_row >= 0 && !nvn_dirty_since_span(rp->view_span, rp->t.mem, size, rp->view_stamp)) { rp->view_dirty = dg; return (__bridge id<MTLTexture>)rp->view; }
++    }
+     id<MTLTexture> v = (__bridge id<MTLTexture>)rp->view;
+     // Guest writes (nvn_dirty_now) matter only to CPU-written textures: a texture that becomes CPU-written later bumps g_ser_gen once (mtl_tex_cpu_written), which sends its ID through here again.
+     // Before, every guest write to any protected page sent every texture ID, render targets included, down this path
+-    rp->view_pkg = (rp->t.has_layout || tex_cpu_written(rp->t.serial)) && rp->t.mem;
++    rp->view_pkg = !rp->gone && (rp->t.has_layout || tex_cpu_written(rp->t.serial)) && rp->t.mem;
+     if (v) {   // The serial table or guest memory has changed: check whether the base texture was re-uploaded and replaced; if so the view is invalidated
+         id<MTLTexture> cur = treg_tex(rp);
+         // cur is nil when the ID has no texture now (a gone texture not made again, a texture that could not be made): a cached base texture has no parent either, so nil == nil
+@@ -17200,7 +17266,8 @@ void mem_census(const char *why) { @autoreleasepool {
+ 
+ __attribute__((weak)) void dm_vk_teardown(void) {}
+ __attribute__((weak)) void dm_gl_teardown(void) {}
+-__attribute__((weak)) void nvn_hle_teardown(void) {}
++// The fallback lives in its own translation unit: fixtures may include the real HLE implementation here too.
++void nvn_hle_teardown(void);
+ 
+ void dm_gfx_teardown(void) { @autoreleasepool {
+     atomic_store(&g_gfx_teardown, 1);
+diff --git a/dm/gfx/tests/Makefile b/dm/gfx/tests/Makefile
+index c9bc945..bdda01b 100644
+--- a/dm/gfx/tests/Makefile
++++ b/dm/gfx/tests/Makefile
+@@ -159,6 +159,9 @@ check_t_cbs_fault: t_cbs_fault
+ t_bc_alias: t_bc_alias.m $(MTL_T_DEP)
+ 	clang $(CFLAGS) -fobjc-arc -o $@ t_bc_alias.m $(MTL_T_SRC) $(FW)
+ check_t_bc_alias: RUN_ENV = MTL_DEBUG_LAYER=1
++t_linear_short_stride: t_linear_short_stride.m $(MTL_T_DEP)
++	clang $(CFLAGS) -fobjc-arc -o $@ t_linear_short_stride.m $(MTL_T_SRC) $(FW)
++check_t_linear_short_stride: RUN_ENV = MTL_DEBUG_LAYER=1
+ t_tex_fit_root: t_tex_fit_root.m $(MTL_T_DEP)
+ 	clang $(CFLAGS) -fobjc-arc -o $@ t_tex_fit_root.m $(MTL_T_SRC) $(FW)
+ .PHONY: check_t_tex_fit_root
+diff --git a/dm/gfx/tests/t_counter_clock.m b/dm/gfx/tests/t_counter_clock.m
+index de56913..4975fba 100644
+--- a/dm/gfx/tests/t_counter_clock.m
++++ b/dm/gfx/tests/t_counter_clock.m
+@@ -65,6 +65,21 @@ static void check_idle_gaps(ClockDevice *device, ClockHeap *heap) {
+     heap.slots = NULL; heap.nslots = 0;
+ }
+ 
++// Timestamp reports retire a caller's pending counter word, with or without conditional rendering.
++static void check_timestamp_reports(void) {
++    for (int i = 0; i < 2; i++) {
++        uint64_t data[2] = {3, UINT64_MAX};
++        post_op *op = calloc(1, sizeof *op);
++        op->type = i ? 0x10 : 0;
++        op->addr = (uint64_t)(uintptr_t)data;
++        post_rec record = {.fence = (uint64_t)i + 1, .n = 1, .ops = op};
++        pthread_mutex_lock(&g_post_mu);   // post_run consumes a claimed record under this lock
++        post_run(&record, 10000, 20000);
++        CHECK("completed timestamp report clears the pending counter word", data[0] == 0);
++        CHECK("completed timestamp report retains a nonzero timestamp", data[1] != 0 && data[1] != UINT64_MAX);
++    }
++}
++
+ int main(void) {
+     @autoreleasepool {
+         ClockDevice *device = [ClockDevice new];
+@@ -88,6 +103,7 @@ int main(void) {
+         CHECK("a missing CPU sample takes the existing feedback fallback", rep_ticks(&report, &clock, 0, 10000, 0) == nvn_timestamp_from_ns(10000));
+         device.cpu = now_ns() - delay; device.gpu = device.cpu + offset;
+         check_idle_gaps(device, heap);
++        check_timestamp_reports();
+ 
+         guest_clock_freeze(1);
+         uint64_t frozen = guest_ns();
+diff --git a/dm/gfx/tests/t_linear_short_stride.m b/dm/gfx/tests/t_linear_short_stride.m
+new file mode 100644
+index 0000000..800b670
+--- /dev/null
++++ b/dm/gfx/tests/t_linear_short_stride.m
+@@ -0,0 +1,191 @@
++// Short LINEAR row advances are kept in the retail NVN descriptor independently of width.
++// Synthetic guarded backing makes every sampled byte defined, including the last row's tail.
++#include "../nvn/nvn_mtl.m"
++void *front_metal_layer(void) { return NULL; }
++module_t *module_of(const void *p) { (void)p; return NULL; }
++module_t *g_mod; int g_nmod;
++void svc_thread_dump(void) {}
++uint64_t now_ns(void) { return bp_now(); }
++void crash_install(void);
++static int checks, failed;
++#define CHECK(c, label) do { checks++; if (!(c)) { failed++; fprintf(stderr, "FAIL: %s\n", label); } } while (0)
++
++enum { W = 16, H = 2, STRIDE = 32, ROW = W * 4, OFFSET = 65536, POOL = 131072 };
++static int pixel_bytes(id<MTLBuffer> output, const uint8_t *source) {
++    int bad = 0; for (int y = 0; y < H; y++) bad += memcmp((uint8_t *)output.contents + y * ROW, source + y * STRIDE, ROW) != 0;
++    CHECK(!memcmp((uint8_t *)output.contents + 32, (uint8_t *)output.contents + ROW, 32), "x=8,y=0 aliases x=0,y=1 at the short row advance");
++    return bad;
++}
++static id<MTLBuffer> capture_pixels(id<MTLTexture> texture) {
++    if (!texture) return nil;
++    size_t row = texture.width * mtl_pf_block_bytes(texture.pixelFormat), image = row * texture.height;
++    id<MTLBuffer> output = [g_dev newBufferWithLength:image options:MTLResourceStorageModeShared];
++    res_add(output); defer_obj_release(output);
++    enc_b_copy_texture_buffer(blit(), texture, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(texture.width, texture.height, 1), output, 0, row, image);
++    return output;
++}
++static int pixels(id<MTLTexture> texture, const uint8_t *source) {
++    if (!texture) return 1;
++    id<MTLBuffer> output = [g_dev newBufferWithLength:ROW * H options:MTLResourceStorageModeShared];
++    id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
++    [blit copyFromTexture:texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
++              sourceSize:MTLSizeMake(W, H, 1) toBuffer:output destinationOffset:0
++              destinationBytesPerRow:ROW destinationBytesPerImage:ROW * H];
++    [blit endEncoding]; [cb commit]; [cb waitUntilCompleted];
++    CHECK(cb.status == MTLCommandBufferStatusCompleted && !cb.error, "GPU readback completes with validation");
++    return pixel_bytes(output, source);
++}
++static void gpu_variant(pool_t *pool, size_t off, int format, unsigned w, unsigned h, unsigned stride, unsigned flags) {
++    int bw, bh, bpb = nvn_fmt_bpb(format, &bw, &bh);
++    size_t row = (size_t)w * bpb, span = (size_t)(h - 1) * stride + row;
++    unsigned x = 4;   // writes the shared part of the next pitched row, not only the final non-aliased tail
++    tex_t t = {.magic = MAGIC('T','E','X',0), .serial = nvn_new_serial(), .pool = pool, .off = off, .mem = (uint8_t *)pool->mem + off};
++    t.d = (nvn_texdesc){.target = NVN_TEXTURE_TARGET_2D, .format = format, .flags = flags,
++                       .width = w, .height = h, .depth = 1, .levels = 1, .samples = 1, .stride = stride};
++    nvn_tex_layout(&t.d, &t.L); mtl_tex_init(&t);
++    uint8_t *want = malloc(span), *expected = malloc(row * h), *source = (uint8_t *)pool->mem + 1024;
++    if (!want || !expected) abort();
++    for (size_t i = 0; i < span; i++) ((uint8_t *)t.mem)[i] = want[i] = (uint8_t)(i * 13 + 27);
++    memset(source, 0x7c, 4 * bpb); memcpy(want + (h - 1) * stride + x * bpb, source, 4 * bpb);
++    for (unsigned y = 0; y < h; y++) memcpy(expected + y * row, want + y * stride, row);
++    int shift = rb_packed_shift(format);
++    if (shift) rb_swap_rows(expected, row, h, 1, row, row * h, shift);
++    p_copy_b2t copy = {.src = (uint64_t)(uintptr_t)source, .tex = &t, .r = {(int)x, (int)h - 1, 0, 4, 1, 1}};
++    mtl_sub_begin(); copy_b2t(&copy, sizeof copy); id<MTLBuffer> output = capture_pixels(tex_mtl(&t));
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull) && !mtl_last_commit_error(), "packed / height-one / multi-page GPU variant completes");
++    CHECK(!memcmp(t.mem, want, span), "GPU variant preserves the complete authoritative sampled span");
++    CHECK(output && !memcmp(output.contents, expected, row * h), "GPU variant samples every pitched byte in Metal's packed-channel order");
++    CHECK(t.L.size == (uint64_t)stride * h && t.d.stride == stride && t.d.width == w, "GPU variant preserves public storage size, pitch and width");
++    mtl_tex_release(&t); free(want); free(expected);
++}
++int main(void) { @autoreleasepool {
++    crash_install(); mtl_init();
++    uint8_t *memory = mmap(NULL, POOL, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
++    if (memory == MAP_FAILED) return 2;
++    size_t pg = (size_t)getpagesize();
++    pool_t *pool = mmap(NULL, pg, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
++    if (pool == MAP_FAILED) return 2;
++    memset(memory, 0xa5, POOL);
++    for (int i = 0; i < STRIDE * (H - 1) + ROW; i++) memory[OFFSET + i] = (uint8_t)(i * 17 + 3);
++    *pool = (pool_t){.magic = MAGIC('P','O','O','L'), .mem = memory, .size = POOL, .flags = 0x22};
++    nvn_dirty_add_range(memory, POOL); mtl_pool_add(memory, POOL);
++    tex_t texture = {.magic = MAGIC('T','E','X',0), .serial = nvn_new_serial(), .pool = pool, .mem = memory + OFFSET, .off = OFFSET};
++    texture.d = (nvn_texdesc){.target = NVN_TEXTURE_TARGET_2D, .format = NVN_FORMAT_RGBA8, .flags = NVN_TEXTURE_FLAGS_LINEAR,
++                             .width = W, .height = H, .depth = 1, .levels = 1, .samples = 1, .stride = STRIDE};
++    nvn_tex_layout(&texture.d, &texture.L); mtl_tex_init(&texture);
++    CHECK(texture.L.size == STRIDE * H, "NVN storage size stays the explicit pitch times height");
++    tex_t misplaced = texture, sampled; misplaced.mem = memory + POOL - STRIDE * H;
++    CHECK(linear_sample_copy(&misplaced, &sampled) < 0, "a stale pool offset cannot authorize sampling beyond the actual pool address");
++    misplaced.off = POOL - STRIDE * H;
++    CHECK(linear_sample_copy(&misplaced, &sampled) < 0, "matching mem/off with only reported storage capacity cannot authorize the sampled tail");
++    mtl_sub_begin(); id<MTLTexture> first = tex_mtl(&texture);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "first upload completes");
++    CHECK(first && first.width == W && first.height == H, "the full logical dimensions are preserved");
++    CHECK(!pixels(first, memory + OFFSET), "all GPU pixels follow overlapping pitched addresses");
++    // A sampled byte beyond reported NVN storage must still participate in dirty tracking.
++    ((volatile uint8_t *)memory)[OFFSET + 80] ^= 0x7f;
++    mtl_sub_begin(); id<MTLTexture> second = tex_mtl(&texture);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "tail rewrite upload completes");
++    CHECK(!pixels(second, memory + OFFSET), "CPU rewrites in the sampled tail are uploaded");
++    // The production buffer-to-texture path receives the original descriptor after sampling expanded its edge cache.
++    enum { SAMPLED = STRIDE * (H - 1) + ROW, COPY_BYTES = 16, COPY_AT = STRIDE + 16 };
++    uint8_t want[SAMPLED]; memcpy(want, memory + OFFSET, sizeof want);
++    memset(memory + 1024, 0x6b, COPY_BYTES); memset(want + COPY_AT, 0x6b, COPY_BYTES);
++    p_copy_b2t copy = {.src = (uint64_t)(uintptr_t)(memory + 1024), .tex = &texture, .r = {4, 1, 0, 4, 1, 1}};
++    mtl_sub_begin(); copy_b2t(&copy, sizeof copy);
++    id<MTLBuffer> same_submission = capture_pixels(tex_mtl(&texture));
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull) && !mtl_last_commit_error(), "in-stride GPU subrectangle copy completes");
++    CHECK(same_submission && !pixel_bytes(same_submission, want), "same-submission sampling sees every GPU-written logical alias");
++    NvPkg *pk = tex_get(texture.serial);
++    CHECK(pk && pk->eb && pk->eb.length >= SAMPLED, "GPU edge buffer covers the complete cached sampled span");
++    CHECK(pk && pk->eb.length >= SAMPLED && !memcmp(pk->eb.contents, want, SAMPLED), "GPU store updates edge bytes without losing the sampled tail");
++    CHECK(!memcmp(memory + OFFSET, want, SAMPLED), "GPU subrectangle reaches storage and preserves the other sampled bytes");
++    mtl_sub_begin(); id<MTLTexture> gpu_aliases = tex_mtl(&texture);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "immediate post-GPU sampling submission completes");
++    CHECK(!pixels(gpu_aliases, memory + OFFSET), "GPU subrectangle refreshes every overlapping sampled alias before a CPU rewrite");
++    // A clear uses gsb_store (texture -> backing), not copy_b2t's gsb_store_buf path.
++    for (int i = 0; i < 4; i++) memcpy(want + STRIDE + i * 4, (uint8_t[]){255, 0, 0, 255}, 4);
++    p_clear_tex clear = {.tex = &texture, .r = {0, 1, 0, 4, 1, 1}, .mask = 15, .c.f = {1, 0, 0, 1}};
++    mtl_sub_begin(); clear_tex(&clear); same_submission = capture_pixels(tex_mtl(&texture));
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull) && !mtl_last_commit_error(), "GPU clear storage-write submission completes");
++    CHECK(!memcmp(memory + OFFSET, want, SAMPLED), "GPU clear reaches the authoritative pitched backing");
++    CHECK(same_submission && !pixel_bytes(same_submission, want), "texture-originated storage writes refresh all aliases in the same submission");
++    // Whole logical rows may themselves overlap in backing. Store in row order, then sample that backing,
++    // rather than allowing parallel stores to race or retaining the now-inconsistent rectangular source.
++    memset(memory + 1024, 0xa9, ROW); memset(memory + 1024 + ROW, 0x3d, ROW);
++    for (int y = 0; y < H; y++) memcpy(want + y * STRIDE, memory + 1024 + y * ROW, ROW);
++    copy.r = (NVNcopyRegion){0, 0, 0, W, H, 1};
++    tex_t linear_rt = texture; linear_rt.d.flags = NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET;
++    gsb_geo geometry;
++    CHECK(!gsb_geom(&linear_rt, 0, 0, 1, &copy.r, &geometry) && geometry.lin == STRIDE, "LINEAR_RENDER_TARGET uses the same bounded pitched storage geometry");
++    mtl_sub_begin(); copy_b2t(&copy, sizeof copy); same_submission = capture_pixels(tex_mtl(&texture));
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull) && !mtl_last_commit_error(), "overlapping whole-row GPU copy completes");
++    CHECK(!memcmp(memory + OFFSET, want, SAMPLED), "whole-row GPU writes reach the sampled tail in deterministic row order");
++    CHECK(same_submission && !pixel_bytes(same_submission, want), "whole-row GPU sampling is coherent with backing, not the rectangular copy source");
++    ((volatile uint8_t *)memory)[OFFSET + 80] ^= 0x35;
++    mtl_sub_begin(); id<MTLTexture> after_store = tex_mtl(&texture);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "CPU rewrite after a GPU storage copy re-uploads");
++    CHECK(!pixels(after_store, memory + OFFSET), "re-upload retains GPU subrectangle bytes and the CPU tail rewrite");
++    CHECK(texture.L.size == STRIDE * H && texture.d.stride == STRIDE, "Metal resolution never rewrites NVN layout metadata");
++    CHECK(memory[OFFSET - 1] == 0xa5 && memory[OFFSET + STRIDE * (H - 1) + ROW] == 0xa5, "source guards remain untouched");
++    gpu_variant(pool, POOL - ROW, NVN_FORMAT_RGBA8, W, 1, STRIDE, NVN_TEXTURE_FLAGS_LINEAR);   // height one, sampled span ends exactly at pool end
++    gpu_variant(pool, OFFSET - 256, NVN_FORMAT_RGB565, 32, 2, 32, NVN_TEXTURE_FLAGS_LINEAR);
++    gpu_variant(pool, OFFSET - 512, NVN_FORMAT_RGBA4, 32, 2, 32, NVN_TEXTURE_FLAGS_LINEAR);
++    gpu_variant(pool, 16384, NVN_FORMAT_RGBA8, 8192, 3, 4096, NVN_TEXTURE_FLAGS_LINEAR);   // sampled span crosses multiple host pages
++    // Writable short-pitch descriptors must not bypass backing/alias coherence.
++    gpu_variant(pool, OFFSET - 1024, NVN_FORMAT_RGBA8, W, H, STRIDE, NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_IMAGE);
++    gpu_variant(pool, OFFSET - 1280, NVN_FORMAT_RGBA8, W, H, STRIDE, NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET);
++    // Register the original NVN layout with its reported storage ending exactly at a host-page boundary.
++    // Only the sampled tail reaches the next page: the clean-page ID shortcut must not overlook a write there.
++    enum { TID = 7 };
++    tex_t registered = texture; registered.serial = nvn_new_serial(); registered.off = OFFSET + pg - STRIDE * H;
++    registered.mem = memory + registered.off;
++    for (int i = 0; i < SAMPLED; i++) ((uint8_t *)registered.mem)[i] = (uint8_t)(i * 13 + 9);
++    mtl_tex_init(&registered); mtl_reg_tex(TID, &registered, NULL);
++    mtl_sub_begin(); id<MTLTexture> original = nil;
++    os_unfair_lock_lock(&g_rmu);
++    for (int i = 0; i < 2; i++) original = tex_by_id(TID);   // also settles the serial note from the first upload
++    CHECK(g_treg[TID].view_span && g_treg[TID].view_pkg && g_treg[TID].view_ser == treg_ep(), "registered ID has a settled packaged-view cache");
++    const void *span = g_treg[TID].view_span; uint64_t stamp = g_treg[TID].view_stamp;
++    os_unfair_lock_unlock(&g_rmu);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "registered-ID initial upload completes");
++    CHECK(!pixels(original, registered.mem), "registered-ID initial pixels follow the short pitch");
++    CHECK(((uintptr_t)registered.mem + registered.L.size) % pg == 0 && (uintptr_t)registered.mem / pg != ((uintptr_t)registered.mem + 80) / pg, "sampled tail lies on a distinct host page outside reported storage");
++    uint64_t before_write = nvn_dirty_now(), reuploads = g_pkg_reuploads;
++    ((volatile uint8_t *)registered.mem)[80] ^= 0x7f;
++    CHECK(nvn_dirty_now() > before_write && !nvn_dirty_since_span(span, registered.mem, registered.L.size, stamp)
++          && nvn_dirty_since_span(span, registered.mem, SAMPLED, stamp), "CPU fault dirties only the sampled-tail page, not the NVN storage page");
++    mtl_sub_begin(); os_unfair_lock_lock(&g_rmu); id<MTLTexture> refreshed = tex_by_id(TID); os_unfair_lock_unlock(&g_rmu);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull), "registered-ID tail rewrite submission completes");
++    CHECK(g_pkg_reuploads == reuploads + 1, "registered-ID sampling re-uploads a CPU rewrite on the sampled-tail page");
++    CHECK(!pixels(refreshed, registered.mem), "registered-ID pixels contain the separate-page sampled-tail rewrite");
++    CHECK(registered.L.size == STRIDE * H && g_treg[TID].t.L.size == STRIDE * H && g_treg[TID].t.d.stride == STRIDE, "registered sampling preserves public and snapshotted NVN storage metadata");
++    // Deterministically pause pool finalization between its real registry and CPU-classification phases.
++    // No racing threads or fabricated cache fields: a legal ID lookup in that interval must not re-arm
++    // backing reads. Protect the retired object's page afterwards so even its magic is inaccessible.
++    treg_drop_pool_views(pool);
++    CHECK(g_treg[TID].gone && !g_treg[TID].view_span && !g_treg[TID].view_pkg, "pool retirement removes the ID's backing-read authority");
++    mtl_sub_begin(); os_unfair_lock_lock(&g_rmu);
++    id<MTLTexture> retained = nil;
++    for (int i = 0; i < 2; i++) retained = tex_by_id(TID);
++    CHECK(retained == refreshed, "lookup during pool retirement preserves the retained host texture");
++    CHECK(!g_treg[TID].view_span && !g_treg[TID].view_pkg, "lookup before CPU classification drops cannot repopulate a gone ID's sampled-span cache");
++    os_unfair_lock_unlock(&g_rmu);
++    cpu_tex_drop_pool(pool); gws_drop_pool(pool); pool->magic = 0;
++    CHECK(!mprotect(pool, pg, PROT_NONE), "retired pool-object memory is inaccessible");
++    before_write = nvn_dirty_now(); nvn_dirty_protect(memory, pg); ((volatile uint8_t *)memory)[0] ^= 1;
++    CHECK(nvn_dirty_now() > before_write, "unrelated CPU write advances the dirty generation after pool retirement");
++    os_unfair_lock_lock(&g_rmu);
++    retained = tex_by_id(TID);
++    CHECK(retained == refreshed && !g_treg[TID].view_span && !g_treg[TID].view_pkg, "gone-ID dirty lookup never reads the inaccessible pool object");
++    ser_note(registered.serial); retained = tex_by_id(TID);
++    CHECK(retained == refreshed && !g_treg[TID].view_span && !g_treg[TID].view_pkg, "gone-ID serial-cache miss also retains host content without backing reads");
++    os_unfair_lock_unlock(&g_rmu);
++    CHECK(mtl_wait(mtl_sub_commit(), 5000000000ull) && !mtl_last_commit_error(), "retired-ID lookup submission completes");
++    CHECK(!pixels(retained, registered.mem), "safe retained host texture keeps its pixels after pool-object retirement");
++    CHECK(!mprotect(pool, pg, PROT_READ | PROT_WRITE), "retired object page restored only for fixture cleanup");
++    mtl_reg_tex(TID, NULL, NULL); mtl_tex_release(&registered);
++    mtl_tex_release(&texture); mtl_pool_del(memory); mtl_alias_drop_pool(pool);
++    nvn_dirty_remove_range(memory); defer_drain(); munmap(memory, POOL); munmap(pool, pg);
++    printf("short linear stride: %d checks, %d failed\n", checks, failed); return failed != 0;
++} }
+diff --git a/dm/gfx/tests/t_nvn.c b/dm/gfx/tests/t_nvn.c
+index 5985eae..f29436d 100644
+--- a/dm/gfx/tests/t_nvn.c
++++ b/dm/gfx/tests/t_nvn.c
+@@ -425,7 +425,7 @@ int main(void) {
+     EXPECT("buffer copy 64 B identical", 0, memcmp(src, dst, 64));
+     uint64_t ts[2]; memcpy(ts, cnt, 16);
+     EXPECT("counter timestamp written (non-zero)", 1, ts[1] != 0);
+-    EXPECT("its counter field: the time, 0 with the profile's render_cond (as on the GPU)", DM_GAME_RENDER_COND ? 0 : ts[1], ts[0]);
++    EXPECT("timestamp report clears its counter field for every profile", 0, ts[0]);
+     NVNcounterData fixed_counter = {0, 614400};
+     EXPECT("614400 raw counter ticks = 1 ms", 1000000, P(nvnDeviceGetTimestampInNanoseconds)(&dev, &fixed_counter));
+     NVNcounterData reported_counter; memcpy(&reported_counter, cnt, sizeof reported_counter);
+diff --git a/dm/gfx/tests/t_render_counter_overlap.m b/dm/gfx/tests/t_render_counter_overlap.m
+index 05c1912..09c3f99 100644
+--- a/dm/gfx/tests/t_render_counter_overlap.m
++++ b/dm/gfx/tests/t_render_counter_overlap.m
+@@ -6,8 +6,6 @@
+ // It checks the profile key render_cond's replay, so the key is on whatever profile GAME names:
+ // without it the host draws every render-enable block and posts no pending counter values.
+ #include "game_profile.h"
+-#undef DM_GAME_RENDER_COND
+-#define DM_GAME_RENDER_COND 1
+ #define nvn_game_fps nvn_game_fps_mtl_default
+ #include "../nvn/nvn_mtl.m"
+ #undef nvn_game_fps
+@@ -70,7 +68,11 @@ static NVNcommandHandle record(NVNtexture *texture, NVNprogram *program, int wai
+     return P(nvnCommandBufferEndRecording)(&command);
+ }
+ int main(void) { @autoreleasepool {
+-    if (setvbuf(stdout, NULL, _IONBF, 0)) abort(); mtl_init(); NSError *error = nil;
++    if (setvbuf(stdout, NULL, _IONBF, 0)) abort();
++    // The real profile loader is in t_host_stubs.c: a local macro cannot configure that translation unit.
++    if (setenv("DM_PROF_RENDER_COND", "1", 1)) abort();
++    require(dm_prof()->render_cond == 1, "fixture enables runtime conditional rendering");
++    mtl_init(); NSError *error = nil;
+     id<MTLLibrary> library = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
+         "vertex float4 v(uint i [[vertex_id]]) { const float2 p[] = {float2(-1,-1),float2(3,-1),float2(-1,3)}; return float4(p[i],0.5,1); }\n"
+         "fragment float4 red() { return float4(1,0,0,1); } fragment float4 green() { return float4(0,1,0,1); }\n"

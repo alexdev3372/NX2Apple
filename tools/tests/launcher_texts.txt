@@ -1,8 +1,11 @@
 120 fps
 16:9 (Switch)
 30 fps
+30 fps (original)
 60 fps
+60 fps (experimental)
 American English
+Applies on next launch. 60 fps can use more power and lower dynamic resolution. Physics and device performance are unverified.
 Brazilian Portuguese
 British English
 Canadian French

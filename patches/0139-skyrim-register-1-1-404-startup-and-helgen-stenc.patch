@@ -1,0 +1,275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Aguilar <291639929+alexdev3372@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:52:18 -0800
+Subject: [PATCH] skyrim: register 1.1.404 startup and Helgen stencil repairs
+
+Upstream-Status: pending
+Reason: Require the measured main and SDK and generate shader tables locally without distributing extracted assets.
+Issue: seedds/nxnative#148
+---
+ dm/games/01000A10041EA000/README.md           | 14 ++++++++++
+ dm/games/01000A10041EA000/bf_want.tsv         |  1 +
+ dm/games/01000A10041EA000/game.tsv            | 27 ++++++++++++++++++
+ dm/games/01000A10041EA000/patches.py          | 17 +++++++++++
+ .../shader_map.tsv.conflicts.tsv              |  2 ++
+ dm/games/README.md                            |  4 ++-
+ dm/tools/patch_nso.py                         | 10 ++++++-
+ dm/tools/tests/test_nsp_incremental.py        | 17 +++++++++++
+ scripts/build_ipa_from_nsp.py                 | 28 +++++++++++++++++--
+ 9 files changed, 115 insertions(+), 5 deletions(-)
+ create mode 100644 dm/games/01000A10041EA000/README.md
+ create mode 100644 dm/games/01000A10041EA000/bf_want.tsv
+ create mode 100644 dm/games/01000A10041EA000/game.tsv
+ create mode 100644 dm/games/01000A10041EA000/patches.py
+ create mode 100644 dm/games/01000A10041EA000/shader_map.tsv.conflicts.tsv
+
+diff --git a/dm/games/01000A10041EA000/README.md b/dm/games/01000A10041EA000/README.md
+new file mode 100644
+index 0000000..471a593
+--- /dev/null
++++ b/dm/games/01000A10041EA000/README.md
+@@ -0,0 +1,14 @@
++# The Elder Scrolls V: Skyrim
++
++Switch update **1.1.404 / v393216**, SDK 14, Creation Engine over NVN. Use this update with the base game. The normal NSP build checks both `main` and `sdk` against `game.tsv`. Other builds do not inherit these settings through automatic profile derivation. `--provisional` can be used to survey an unsupported build independently.
++
++- **Shader extraction:** the matching build stores inline NVN control/code records in `main` and in a stored FXP member of `Data/Skyrim - Shaders.bsa`. The generic reader checks their descriptor ranges and shader stages. This is not a compressed-BSA reader. Shader tables are made from the user's dump under the build work directory, not shipped as source.
++- **Startup with a bounded alias window:** Default Heap and BSSmallBlockAllocator reserve 512 MiB and 256 MiB instead of 2 GiB and 1 GiB. Initial commits, GPU/File Heap reservations, stack and app pool are unchanged. These cuts work with the profile's 5.5 GiB reservation and 4.875 GiB alias region. The original layout aborts before `nnMain` in the constrained Mac test, while either half alone fails later. Reaching the frame loop does not establish long-session heap headroom.
++- **Helgen Keep brightness:** mode 7 now initializes Metal's separate stencil plane before the game's raw D24S8 compute pass. Mode 1 still clears depth only. This is the 1.1.404 site for the approach in [nxnative PR #444](https://github.com/seedds/nxnative/pull/444), not the older build's patch address. The original instructions are checked before rewriting.
++- **New Game and Quit:** bounded overlapping linear rows need a private Metal sampling copy with an in-order refresh after copy/clear writeback. The shell must also park guest threads before reclaiming the AudioOut instances that the renderer can still close.
++
++The opening cart and a Helgen checkpoint were exercised on Mac with the repair inputs. These checks do not establish physical iPhone address-space limits, sustained handheld play, or Quit-to-library and relaunch on a phone.
++
++## Experimental frame rate
++
++Mac offers 30 fps (original) and 60 fps (experimental) for the verified main and SDK. For local iPhone diagnostics only, `DM_SKYRIM_FPS_PROTOTYPE=1` at framework build time enables the same setting. Standard iPhone builds do not offer it. Unset or `DM_SKYRIM_FPS=30` preserves the game's pacing and dynamic-resolution thresholds. The 60 fps option changes present cadence and the dynamic-resolution frame budgets, not simulation timing. Movies and serious thermal state fall back to 30 fps. Physics, cinematics and sustained device performance are not qualified.
+diff --git a/dm/games/01000A10041EA000/bf_want.tsv b/dm/games/01000A10041EA000/bf_want.tsv
+new file mode 100644
+index 0000000..54caeb8
+--- /dev/null
++++ b/dm/games/01000A10041EA000/bf_want.tsv
+@@ -0,0 +1 @@
++# generated
+diff --git a/dm/games/01000A10041EA000/game.tsv b/dm/games/01000A10041EA000/game.tsv
+new file mode 100644
+index 0000000..4f247ac
+--- /dev/null
++++ b/dm/games/01000A10041EA000/game.tsv
+@@ -0,0 +1,27 @@
++# Skyrim 1.1.404. Only the registered main and SDK are covered by the memory and lighting fixes.
++title_id	01000A10041EA000
++program_id	01000A10041EA000
++name	The Elder Scrolls V: Skyrim
++ipa	TheElderScrollsVSkyrim.ipa
++app_category	public.app-category.games
++build	v393216	1.1.404.0	main=0c0cac3fcf0f0beb9dcf79cb68e30739	sdk=2aef2cffb104ee7c9e212fd2f4c731e9
++package	v393216
++modules	main sdk
++romfs_marker	Data/Skyrim - Voices_en0.bsa
++zip_store	.bik:.bsa:.esm:.metallib
++
++# Give the remaining regions room without changing the game stack or app pool.
++# patches.py reduces two guest heap reservations, not their initial commits.
++mem_reserve	0x160000000
++mem_alias	0x138000000
++mem_stack	0x10000000
++app_pool	0xCD500000
++sys_resource	0x800000
++
++# Generate all shader tables from the user's verified dump in the build workspace.
++shader_versions	v393216
++split_dump_tables	on
++shader_groups	/Data/=data /BatchFiles/=batchfiles
++shader_note	The Elder Scrolls V: Skyrim shaders
++depth_mode	zero
++skyrim_fps_experiment	on
+diff --git a/dm/games/01000A10041EA000/patches.py b/dm/games/01000A10041EA000/patches.py
+new file mode 100644
+index 0000000..af545a8
+--- /dev/null
++++ b/dm/games/01000A10041EA000/patches.py
+@@ -0,0 +1,17 @@
++"""Skyrim 1.1.404 (v393216), matching main and SDK only."""
++
++MAIN = '0c0cac3fcf0f0beb9dcf79cb68e30739'
++SDK = '2aef2cffb104ee7c9e212fd2f4c731e9'
++CUTS_REQUIRE = {MAIN: {'sdk': SDK}}
++CUTS = {
++    MAIN: [
++        # Change reservation arguments, not the initial commits (85 MiB and 4 MiB).
++        (0x59bb24, '0100b052', '0100a452', 'Default Heap: reserve 512 MiB instead of 2 GiB'),
++        (0x5c62e0, '0100a852', '0100a252', 'BSSmallBlockAllocator: reserve 256 MiB instead of 1 GiB'),
++        # Mode 7 sets w21=1 in the shared depth-clear path and mode 1 leaves it zero.
++        # The later raw D24S8 compute write cannot initialize Metal's separate stencil plane.
++        # NEG supplies the full stencil mask only for mode 7. The stencil value, later compute
++        # dispatch and UI clear are unchanged. Port of the stencil approach in nxnative#444.
++        (0xbf7d5c, 'e3031f2a', 'e303154b', 'Helgen: initialize stencil in mode 7 and preserve the mode-1 depth-only clear'),
++    ],
++}
+diff --git a/dm/games/01000A10041EA000/shader_map.tsv.conflicts.tsv b/dm/games/01000A10041EA000/shader_map.tsv.conflicts.tsv
+new file mode 100644
+index 0000000..35c1b4d
+--- /dev/null
++++ b/dm/games/01000A10041EA000/shader_map.tsv.conflicts.tsv
+@@ -0,0 +1,2 @@
++# kind: evidence  control-section key conflict rulings: empty
++dm_ctl_sha16	chosen_pc	class	candidates	records
+diff --git a/dm/games/README.md b/dm/games/README.md
+index 8925716..ae7ddf9 100644
+--- a/dm/games/README.md
++++ b/dm/games/README.md
+@@ -184,6 +184,7 @@ One row per profile; the notes are each profile's `README.md`.
+ | [Super Smash Bros. Ultimate](01006A800016E000/README.md) | `01006A800016E000` | 13.0.5 | 8.2.1 | Bandai Namco / Sora's engine | NVN |
+ | [Taiko Risshiden V DX](0100346017304000/README.md) | `0100346017304000` | 1.1.1 | 12.3.3 | Koei Tecmo's KTGL | NVN |
+ | [Team Sonic Racing](010092B0091D0000/README.md) | `010092B0091D0000` | 1.0.3 | 5.6.0 | Sumo Digital's engine, Wwise | NVN |
++| [The Elder Scrolls V: Skyrim](01000A10041EA000/README.md) | `01000A10041EA000` | 1.1.404 | 14 | Bethesda's Creation Engine | NVN |
+ | [The Great Ace Attorney Chronicles](010036E00FB20000/README.md) | `010036E00FB20000` | 1.0.0 (base) | 10.4.1 | Capcom's MT Framework | NVN |
+ | [The Legend of Zelda: Breath of the Wild](01007EF00011E000/README.md) | `01007EF00011E000` | 1.9.0 | 20.5.22 | Nintendo EPD (sead / agl / gsys / ksys, Havok) | NVN |
+ | [The Legend of Zelda: Echoes of Wisdom](01008CF01BAAC000/README.md) | `01008CF01BAAC000` | 1.1.0 | 20.5.1 | NintendoWare (G3d / Ui2d / Vfx) | NVN |
+@@ -213,6 +214,7 @@ One row per profile; the notes are each profile's `README.md`.
+ | `build <ver> <display version> <module>=<build ID>…` | One row per version the game was brought up on. The NSP script builds any version (the base game alone, any update): a registered one from the profile as it is, any other from a profile derived from it (`<id>_build/profile`: the same keys, that version's own shader tables; `derive_profile`), with a red line naming the modules whose build no row registers, which the per-build cuts and host fixes do not reach. The host reports the display version by `main`'s build ID |
+ | `package` | The version the profile's tables, prewarm list and notes were made on. The NSP script packs the newest version in the folder (`-p` / `PACKAGE` picks another) |
+ | `shader_versions` | Versions whose union the shader tables are (base game first). A registered version is built from the profile as it is only when all of them are in the folder; otherwise from a derived profile, with tables from the packed version alone |
++| `split_dump_tables` | `on` for a source-only profile with no checked-in shader tables. The NSP build requires the registered version and companion modules, then writes shader tables to a copy of the profile in the build work directory. Other versions cannot inherit this profile through automatic derivation |
+ | `modules` | Code modules rewritten and loaded, in load order. `rtld` is replaced by the host. A game whose versions differ in modules lists them all (Mario Kart World: `main subsdk0 subsdk1 sdk`, the base game has no `subsdk1`): each `build` row names its own, the host loads the modules of the row of `main`'s build (`main.c` `profile_modules`; all of `modules` for a build with no row), `build_ipa.sh` packs the same (`game.py modules`), and the NSP script rewrites the ones the packed version's ExeFS holds. A module a row names that `modules` does not list stays unloaded (Hades' `subsdk0` and `subsdk1`) |
+ | `romfs_marker` | A path that must exist in the RomFS; empty checks the directory itself for a program without a data section (ANIMAL WELL) |
+ | `zip_store` | Extensions the IPA stores without compressing |
+@@ -249,7 +251,7 @@ One row per profile; the notes are each profile's `README.md`.
+ | `perf_mode` | `follow` (the default): the performance mode follows the operation mode (Boost docked, Normal handheld); `boost`: Boost whatever the operation mode (`hle_oe.c`), a combination a Switch 1 never reports, so a profile choice. Rhythm Heaven Groove plays handheld with Boost: docked means a TV to the game, which then asks for a latency calibration, and only Boost gives its 1920x1080 draw size (handheld Normal draws 1280x720) |
+ | `pad_layout` | The iPhone virtual gamepad's layout on first launch: `simple` (the default) = 2D (left stick, A/B/X/Y, shoulders, − / +), `full` = 3D (adds a D-pad, a right stick and L3 / R3; the right stick is not drawn: a touch landing in the right third of the screen on no control holds it, centred where it lands), `touch` = Tap (no control but the layout button: every touch goes to the game's touch screen; needs `op_mode handheld`, Balatro). The layout button at the top centre goes to the next layout in game (Tap only in handheld mode) and the app remembers the player's choice (`DmGamepad.m`) |
+ | `tex_flush_upload` | `on` / `off` (the default): a texture the game fills from the CPU in place (no packaged layout, no `WriteTexels`) and publishes with `nvnMemoryPoolFlushMappedRange` is uploaded from guest memory like a packaged one, and re-uploaded when its pages change (`ft_add` in `hle_nvn.c`). Tears of the Kingdom streams all its textures this way; without it the 3D scene is black. Off by default because a flushed range in another game could cover an image a shader writes, whose GPU content the upload would replace. Without the key, every game still gets a texture's storage once when the game flushed it before the texture's first use (`nvn_flushed` in `hle_nvn.c`: Breath of the Wild's sky tables); the key is for textures the CPU writes again after that |
+-| `render_cond` | `on` / `off` (the default): `SetRenderEnableConditional` / `SetRenderEnable` are recorded and evaluated at replay, and a timestamp report's counter field is 0 as on the GPU (`OP_RENDER_COND` in `nvn_mtl.m`). Tears of the Kingdom wraps its clears in conditions that skip clearing a target nothing has drawn into since its last clear; without the key every clear runs and its 3D scene is black. Animal Crossing: New Horizons too: four clear-only passes wiped its composite before the window copy, and every frame was black. Off by default: other games draw everything, as before |
++| `render_cond` | `on` / `off` (the default): `SetRenderEnableConditional` / `SetRenderEnable` are recorded and evaluated at replay (`OP_RENDER_COND` in `nvn_mtl.m`). Tears of the Kingdom wraps its clears in conditions that skip clearing a target nothing has drawn into since its last clear; without the key every clear runs and its 3D scene is black. Animal Crossing: New Horizons too: four clear-only passes wiped its composite before the window copy, and every frame was black. Off by default: other games draw everything, as before. Timestamp reports clear their counter word independently of this setting |
+ | `tex_dirty_upload` | `on` / `off` (the default), needs `tex_flush_upload`: a registered texture whose pages the CPU writes after `nvnTextureInitialize` without any NVN flush is uploaded as well (its pages are write-protected at registration, checked on first use; `nvn_ft_written` in `hle_nvn.c`). Tears of the Kingdom fills its ASTC terrain material arrays this way; without it the cave is magenta. FINAL FANTASY TACTICS - The Ivalice Chronicles loads its UI textures straight into CPU-uncached pools, which need no flush, after creating them; without both keys its screen stays black. The Great Ace Attorney Chronicles copies every texture into a CPU-cached pool after creating it and never flushes (its `main` has no cache maintenance at all): black too. The Legend of Zelda: Ocarina of Time writes its terrain tiles' height, blend and hole maps this way, and without the keys has holes in the ground |
+ | `tex_dyn_slots` | `on` / `off` (the default): a shader whose buffer-texture handle the translator could not trace to one slot gets Ryujinx's fallback arrays (`<stage>_<tb|s>_cb0_40000000`: 32 buffer textures and samplers indexed by the handle's texture / sampler ID; any other sampled texture indexes the whole pool without a key, [Texture handles from game memory index the pools](../../docs/reference/shaders.md#texture-handles-from-game-memory-index-the-pools)). With the key the replay puts slot indices in that shader's c2 texture and sampler tables (texture slot r → r, sampler slot r → r << 20) and binds slot k at element k, so the shader's own arithmetic picks the binding (`NVN_RB_TEXD` / `NVN_RB_SAMPD` in `nvn_mtl.m`). Right only where the handle comes from c2's tables: Octopath Traveler 0's 61 such vertex shaders read separate texture slots 0-10 and samplers 0-4 there and nothing else (FINAL FANTASY RESONANCE's 2,077 the texture table words 0x168-0x1c0 and sampler table words 0x568-0x590). Off, such shaders do not load. Not part of the shader chain version |
+ | `draw_barriers` | `full` (the default) / `game`: how draw passes are ordered. `full`: each waits for all earlier GPU work. `game`: by the game's own barriers (NVN asks for one before results of rendering are read), so a pass's vertex work overlaps the previous pass's fragments. Ocarina of Time's GPU time 25 → 18 ms, about 180 full barriers a frame halved. Only vertex-stage reads of the previous pass's output without a barrier change order. `DM_NVN_BARRIER` overrides it |
+diff --git a/dm/tools/patch_nso.py b/dm/tools/patch_nso.py
+index 77be199..834c90f 100644
+--- a/dm/tools/patch_nso.py
++++ b/dm/tools/patch_nso.py
+@@ -80,6 +80,7 @@ else:
+ # (a game's own modules: its profile's builds). Every file is loaded, whatever the game, so a module gets the patches of its build wherever it comes from; a build ID claimed twice stops the rewrite.
+ # A file may define:
+ #   CUTS = {build ID: [(offset, original bytes, new bytes, reason)]}: before rewriting, the original bytes are asserted one by one and any mismatch aborts (listed in <name>.cuts.tsv)
++#   CUTS_REQUIRE = {build ID: {sibling module filename: build ID}}: exact companion builds required before applying registered cuts.
+ #   OBS = {build ID: [(offset, number, original instruction word, reason)]}: observation gates. Numbers match OBS_* in the host's hle.h; the original instruction must be position
+ #     independent (no PC-relative / branch / anything involving x18 or tpidr), asserted offline; when the host has no callback attached the gate block goes in and out once and returns
+ #   FRAME_STEP = {build ID: function(ctx)}: the frame step stubs of a main ("Frame step in whole vsyncs" below)
+@@ -110,7 +111,7 @@ patch_paths = {}
+ for path in PATCH_FILES: patch_paths.setdefault(os.path.realpath(path), path)   # repeated roots and symlinks name the same file, not competing build claims
+ PATCH_FILES = list(patch_paths.values())
+ def load_patches():
+-    tables, where = {'CUTS': {}, 'OBS': {}, 'FRAME_STEP': {}, 'STUBS': {}, 'MATCH_CUTS': {}, 'MATCH_FRAME_STEP': {}, 'SDK_MATCH_CUTS': {}, 'CAPABILITIES': {}}, {}
++    tables, where = {'CUTS': {}, 'CUTS_REQUIRE': {}, 'OBS': {}, 'FRAME_STEP': {}, 'STUBS': {}, 'MATCH_CUTS': {}, 'MATCH_FRAME_STEP': {}, 'SDK_MATCH_CUTS': {}, 'CAPABILITIES': {}}, {}
+     for n, path in enumerate(PATCH_FILES):
+         spec = importlib.util.spec_from_file_location(f'patches_{n}', path); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+         for kind, table in tables.items():
+@@ -133,6 +134,13 @@ def load_patches():
+ PATCHES, PATCH_WHERE = load_patches()
+ BUILD_ID = MOD.build_id[:0x10].hex()
+ cuts = list(PATCHES['CUTS'].get(BUILD_ID, []))
++for sibling, expected in PATCHES['CUTS_REQUIRE'].get(BUILD_ID, {}).items():
++    try:
++        with open(os.path.join(os.path.dirname(src), sibling), 'rb') as f: header = f.read(0x50)
++    except OSError:
++        header = b''
++    if header[:4] != b'NSO0' or header[0x40:0x50].hex() != expected:
++        sys.exit(f'[RED] {NAME} build {BUILD_ID} requires {sibling} build {expected} for its registered cuts')
+ if BUILD_ID not in PATCHES['CUTS']:
+     from nso_match import resolve
+     profile = os.path.basename(os.environ.get('DM_GAME', '').rstrip('/'))
+diff --git a/dm/tools/tests/test_nsp_incremental.py b/dm/tools/tests/test_nsp_incremental.py
+index 21c7b36..8e2d402 100644
+--- a/dm/tools/tests/test_nsp_incremental.py
++++ b/dm/tools/tests/test_nsp_incremental.py
+@@ -71,6 +71,23 @@ class Base(unittest.TestCase):
+         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+ 
+ 
++class DumpShaderProfile(Base):
++    def test_only_registered_main_and_sdk_can_use_dump_tables(self):
++        with (self.src / 'game.tsv').open('a') as f:
++            f.write(f'build\tv65536\t1.1.0\tmain={BID2}\tsdk={BID}\nsplit_dump_tables\ton\n')
++        g = game.Game(self.src)
++        for sdk_id, expected in ((None, 'missing'), (BID2, BID2), (BID, None)):
++            if sdk_id: nso(self.ex / 'ExeFS/sdk', sdk_id)
++            bad = nsp.build_mismatch(self.ex, 'v65536', g)
++            if expected:
++                with self.assertRaisesRegex(nsp.BuildError, f'sdk {expected}'):
++                    nsp.check_dump_shader_profile(g, 'v65536', False, bad)
++            else:
++                self.assertTrue(nsp.check_dump_shader_profile(g, 'v65536', False, bad))
++        with self.assertRaisesRegex(nsp.BuildError, 'unregistered'):
++            nsp.check_dump_shader_profile(g, 'v131072', 'unregistered', [])
++
++
+ class DeriveProfile(Base):
+     def later_stages(self):   # what refine_after_rewrite and the shader split write into the derived profile
+         nsp.set_keys(game.Game(self.pdir), {'mem_used': ('0x4800000', 'rewritten modules')}, 'After the rewrite')
+diff --git a/scripts/build_ipa_from_nsp.py b/scripts/build_ipa_from_nsp.py
+index 64adf0f..6e61443 100755
+--- a/scripts/build_ipa_from_nsp.py
++++ b/scripts/build_ipa_from_nsp.py
+@@ -1628,7 +1628,21 @@ def extract_aoc(nx, keys, repo, work, app, fam, logs):
+ def build_mismatch(d, name, g):   # the modules of an extraction whose build ID is not the one the profile's build row of that version registers ([] = the registered build)
+     want = g.builds().get(name)
+     if want is None: return [f'{name} has no build row']
+-    return [f'{m} {build_id(d / "ExeFS" / m)} (registered {bid})' for m, bid in want.items() if m != 'display' and build_id(d / 'ExeFS' / m) != bid]
++    bad = []
++    for m, bid in want.items():
++        if m == 'display': continue
++        path = d / 'ExeFS' / m
++        actual = build_id(path) if path.is_file() else 'missing'
++        if actual != bid: bad.append(f'{m} {actual} (registered {bid})')
++    return bad
++
++
++def check_dump_shader_profile(g, pkg_ver, derived, bad):
++    """Source-only bring-up profiles get no untested fallback to another module set."""
++    if g.get('split_dump_tables', 'off') != 'on': return False
++    if derived or bad:
++        raise BuildError(f'{g.id} {pkg_ver} needs its registered module builds: {derived or "; ".join(bad)}')
++    return True
+ 
+ 
+ def patch_files(repo, exe_dir, mods, game_id=None):
+@@ -2470,7 +2484,7 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
+         text = (logs / 'shader_split.log').read_text(errors='replace')
+     m = re.search(r'shaders: (\d+) \(', text)
+     bad = re.search(r'^\[RED\] (\d+) file\(s\) could not be read.*$', text, re.M)   # the split leaves out a file no reader reads (its own red line per file in the log) and goes on
+-    if bad and not provisional:   # the profile's tables were split from every file: one that does not read now is a reader change
++    if bad and (not provisional or g.get('split_dump_tables', 'off') == 'on'):
+         raise BuildError(f'{bad.group(0).removeprefix("[RED] ")}; the profile\'s tables hold every file\'s shaders (each file in {logs / "shader_split.log"})')
+     if bad: say(f'{bad.group(0)}; the IPA goes without them (each file in {logs / "shader_split.log"})')
+     if m and m.group(1) == '0':   # dmsh_build.py would make no library, and the iOS shader step stop with no word of why
+@@ -3491,6 +3505,7 @@ def main(args=None):
+     check_formats(dirs)
+     check_versions_aarch64(dirs, logs, g, nacp.name(dirs[versions[0]] / 'control.nacp') or f'{app:016X}')   # before build_mismatch, derive_profile and build_sources read the modules
+     bad = [] if derived else [f'{v}: {x}' for v in versions for x in build_mismatch(dirs[v], v, g)]   # every module's build ID must be the one the profile registers for its version
++    dump_tables = check_dump_shader_profile(g, pkg_ver, derived, bad)
+     if bad and provisional: raise BuildError(f'not the builds provisional game profile {g.id} registers: {"; ".join(bad)}')
+     if bad:   # files of other builds under a registered version's tag: packed like any other version
+         derived = f'not the builds game profile {g.id} registers: {"; ".join(bad)}'
+@@ -3504,6 +3519,13 @@ def main(args=None):
+         os.environ['DM_GAMES_FIRST'] = env['DM_GAMES_FIRST'] = '1'
+         g = gamemod.load(g.id)
+         say(f'derived game profile for {pkg_ver} ({disp}): {g.dir}')
++    if dump_tables:
++        # Keep both the checked-in profile and any provisional override untouched.
++        pdir = work / 'registered-profile'
++        derive_profile(g, pdir / g.id, pkg_ver, dirs[pkg_ver], g.words('modules'), shader_only=True)
++        os.environ['DM_GAMES_DIR'] = env['DM_GAMES_DIR'] = os.pathsep.join([str(pdir), env.get('DM_GAMES_DIR', '')])
++        os.environ['DM_GAMES_FIRST'] = env['DM_GAMES_FIRST'] = '1'
++        g = gamemod.load(g.id)
+     sv = versions if derived else need   # the versions whose files the shaders come from
+     game = dirs[pkg_ver]
+     # how the shaders are got follows from the packed version's files (profile_guess.py shader_sources): the graphics API, and the shaders made only at run time
+@@ -3569,7 +3591,7 @@ def main(args=None):
+     else:
+         # Trinity packs and legacy Unreal paks: the split decodes them with the packed version's own decoder (Oodle, LZ5), in the Mac host built for the profile
+         oodle = (lambda: {'DM_OODLE_HOST': str(build_mac_host(repo, work / 'tools/dmhost', env, logs, g)), 'DM_OODLE_MODULES': str(patched)}) if src['oodle_packs'][0] or src['ue_legacy'][0] else None
+-        own = bool(provisional or derived)   # the shader tables come from this build's split (the profile's are checked otherwise)
++        own = bool(provisional or derived or dump_tables)   # otherwise the profile's existing tables are checked
+         def derive_shader_tables(reason):   # called only after the strict DLC-only or additive-compute comparison passed
+             nonlocal g, derived
+             assert g is not None
