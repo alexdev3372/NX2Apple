@@ -1563,6 +1563,7 @@
   "launch.set.DM_SCREEN_ASPECT": "画面比例",
   "launch.set.DM_SCREEN_ASPECT.note": "渲染的像素约多四分之一：稍慢，发热稍多。",
   "launch.set.DM_SHOW_FPS": "帧率显示",
+  "launch.set.DM_SKYRIM_FPS": "帧率",
   "launch.set.DM_SKYRIM_FPS.note": "下次启动时生效。60 fps 可能增加功耗并降低动态分辨率。物理模拟和设备性能尚未验证。",
   "launch.set.DM_SW2": "Switch 2 手柄",
   "launch.set.DM_SW2.note": "通过蓝牙使用 Joy-Con 2 和 Pro Controller 2：游戏中按住手柄上的同步键即可配对。macOS 会请求一次蓝牙访问权限。",
