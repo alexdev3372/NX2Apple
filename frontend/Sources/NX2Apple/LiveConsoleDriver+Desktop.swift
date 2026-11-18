@@ -53,8 +53,8 @@ extension LiveConsoleDriver {
     /// Its mods, its cheats, whether its options differ from the defaults and its cloud save: read when its options open.
     func loadDetails(_ gameID: String) {
         guard let game = libraryGame(gameID), let i = state.games.firstIndex(where: { $0.id == gameID }) else { return }
-        let mods = GameMod.list(in: GameMod.folder(for: game, library: library.folder), titleID: game.titleID)
-        state.games[i].mods = mods.map { ConsoleMod(name: $0.name, usable: $0.usable, on: $0.usable && game.mods.contains($0.name)) }
+        let mods = game.modDirectory(library: library.folder).list()
+        state.games[i].mods = Self.consoleMods(mods, game: game)
         state.games[i].cheats = cheats(game)
         let settings = state.games[i].settings
         state.games[i].canReset = game.hasLauncherOptions || SavedChoices(app: game.appPath, titleID: game.titleID).hasChoices(settings)
@@ -102,8 +102,28 @@ extension LiveConsoleDriver {
 
     func setMod(gameID: String, name: String, on: Bool) {
         guard let game = libraryGame(gameID), state.games.first(where: { $0.id == gameID })?.mods.contains(where: { $0.name == name && $0.usable }) == true else { return }
-        library.setMod(name, on: on, for: game.id)
-        loadDetails(gameID)
+        guard state.startingGameID != gameID, state.pausedGameID != gameID else { showToast(t("launch.modGameRunning")); return }
+        let mods = game.modDirectory(library: library.folder).list().filter { $0.name == name }
+        guard mods.count <= 1 else { showToast(t("launch.modDuplicate")); return }
+        guard let entry = mods.first else { loadDetails(gameID); return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await library.setMod(entry, on: on, for: game.id) { titleID in
+                    state.startingGameID == gameID || state.pausedGameID == gameID || SaveTransfer.runningOnMac(titleID: titleID)
+                }
+            } catch { showToast(modErrorMessage(error, t: t)) }
+            loadDetails(gameID)
+        }
+    }
+
+    private static func consoleMods(_ entries: [ModDirectory.Entry], game: LibraryGame) -> [ConsoleMod] {
+        // Console IDs are folder names. If the user created a duplicate in Finder, show just the active entry.
+        var seen = Set<String>()
+        return entries.sorted { !$0.parked && $1.parked }.filter { seen.insert($0.name).inserted }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map {
+                ConsoleMod(name: $0.name, usable: $0.usable, on: !$0.parked && $0.usable && game.mods.contains($0.name))
+            }
     }
 
     func setCheatsMaster(gameID: String, on: Bool) {

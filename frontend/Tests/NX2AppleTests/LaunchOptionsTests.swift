@@ -102,22 +102,55 @@ final class LaunchOptionsTests: IsolatedDefaultsTestCase {
 
     func testModsAreFoundInTheirLayoutsAndPassedInListOrder() throws {
         var game = LibraryGame(titleID: "01007EF00011E000", name: "Zelda")
-        let folder = GameMod.folder(for: game, library: temporary.path)
+        let directory = game.modDirectory(library: temporary.path)
+        let folder = directory.folder
         let fm = FileManager.default
         for path in ["B Plain/Actor/x.bin", "A Romfs/romfs/Actor/y.bin", "C Atmosphere/atmosphere/contents/01007EF00011E000/romfs/z.bin", "D Code/exefs/main.npdm"] {
             let file = folder.appendingPathComponent(path)
             try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data([1]).write(to: file)
         }
-        let mods = GameMod.list(in: folder, titleID: game.titleID)
+        let mods = directory.list()
         XCTAssertEqual(mods.map(\.name), ["A Romfs", "B Plain", "C Atmosphere", "D Code"])
         XCTAssertEqual(mods.map(\.usable), [true, true, true, false])
         XCTAssertEqual(game.modEnvironment(mods), [:])
         game.mods = ["C Atmosphere", "D Code", "A Romfs"]
-        XCTAssertEqual(game.modEnvironment(mods)["DM_ROMFS_OVERLAY"],
+        XCTAssertEqual(game.modEnvironment(directory.enabledEntries(game.mods))["DM_ROMFS_OVERLAY"],
                        [folder.appendingPathComponent("A Romfs/romfs").path,
                         folder.appendingPathComponent("C Atmosphere/atmosphere/contents/01007EF00011E000/romfs").path].joined(separator: ":"),
                        "the list's order (higher wins), and a code-only mod left out")
+    }
+
+    @MainActor func testImportedModSwitchPersistsForLaunchAndRefusesWhilePlaying() async throws {
+        let file = temporary.appendingPathComponent("library.json")
+        let library = GameLibrary(file: file)
+        library.setFolder(temporary)
+        let game = LibraryGame(titleID: "01007EF00011E000", name: "Fixture")
+        XCTAssertTrue(library.upsert(game))
+        let directory = game.modDirectory(library: library.folder)
+        let source = temporary.appendingPathComponent("Scenery")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data([7]).write(to: source.appendingPathComponent("rocks.bin"))
+        XCTAssertEqual(try directory.importFolder(source), "Scenery")
+        let parked = try XCTUnwrap(directory.list().first)
+        do {
+            try await library.setMod(parked, on: true, for: game.id, isRunning: { $0 == game.titleID })
+            XCTFail("changed mods while the game was running")
+        } catch { XCTAssertEqual(error as? ModDirectory.Failure, .gameRunning) }
+        XCTAssertEqual(directory.list(), [parked])
+        try await library.setMod(parked, on: true, for: game.id, isRunning: { _ in false })
+        let active = try XCTUnwrap(directory.list().first)
+        let reloaded = try XCTUnwrap(GameLibrary(file: file).games.first)
+        XCTAssertEqual(reloaded.mods, ["Scenery"])
+        let prepared = await withCheckedContinuation { continuation in
+            GameStart.withValidatedMods(for: reloaded, folder: library.folder) { continuation.resume(returning: $0) }
+        }
+        let env = reloaded.startEnvironment(controls: [:], settings: [], mods: prepared)
+        XCTAssertEqual(env["DM_ROMFS_OVERLAY"], directory.folder.appendingPathComponent("Scenery/romfs").path)
+        try await library.setMod(active, on: false, for: game.id, isRunning: { _ in false })
+        XCTAssertEqual(GameLibrary(file: file).games.first?.mods, [])
+        XCTAssertEqual(directory.list(), [parked])
+        XCTAssertEqual(try Data(contentsOf: source.appendingPathComponent("rocks.bin")), Data([7]))
     }
 
     func testShortChoicesAreSegmentedAndTheGameLanguageIsAlwaysAMenu() {

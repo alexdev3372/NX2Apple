@@ -30,6 +30,10 @@ struct LaunchOptionsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var choicesRevision = 0   // bumped by a change: the values are read from the store again
     @State private var modsRevision = 0   // bumped by Refresh: the folder is read again
+    @State private var importingMod = false
+    @State private var changingMod = false
+    @State private var modError: String?
+    var gameStarting: () -> Bool = { false }
     @State private var frameTimesRevision = 0   // bumped by the switch and Refresh: the recordings are read again
     @EnvironmentObject private var focus: PadFocus
     @EnvironmentObject private var saveSettings: SaveSettingsStore   // the global setup and this game's own choices (SaveLocation.swift)
@@ -44,12 +48,6 @@ struct LaunchOptionsView: View {
     private func value(_ s: LaunchSetting, _ game: LibraryGame) -> String {
         _ = choicesRevision
         return s.storeBacked ? (store?.current(s) ?? s.def) : game.launchValue(s)
-    }
-    private var modsFolder: URL? { game.map { GameMod.folder(for: $0, library: library.folder) } }
-    private var mods: [GameMod] {
-        _ = modsRevision
-        guard let game, let modsFolder else { return [] }
-        return GameMod.list(in: modsFolder, titleID: game.titleID)
     }
 
     var body: some View {
@@ -457,7 +455,9 @@ struct LaunchOptionsView: View {
     /// The game's mods folder as switches. A mod changes the files the game reads, saves included: the note says so, and
     /// Show saves opens the folder to back them up before switching one.
     @ViewBuilder private func modsSection(_ game: LibraryGame) -> some View {
-        let list = mods
+        let _ = modsRevision
+        let directory = game.modDirectory(library: library.folder)
+        let list = directory.list()
         VStack(alignment: .leading, spacing: 10) {
             heading(loc.t("launch.mods"))
             card {
@@ -472,32 +472,47 @@ struct LaunchOptionsView: View {
                     .padding(.horizontal, 18).padding(.vertical, 13)
                 } else {
                     ForEach(list) { mod in
+                        let on = !mod.parked && game.mods.contains(mod.name)
                         HStack(spacing: 16) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(mod.name).font(.manrope(14, .medium)).lineLimit(1)
                                 if !mod.usable {
-                                    Text(loc.t("launch.modCode")).font(.manrope(12)).foregroundStyle(LauncherPalette.secondaryText)
+                                    Text(loc.t("launch.modUnsupported")).font(.manrope(12)).foregroundStyle(LauncherPalette.secondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                             Spacer(minLength: 12)
-                            Toggle(mod.name, isOn: Binding(get: { mod.usable && game.mods.contains(mod.name) },
-                                                     set: { library.setMod(mod.name, on: $0, for: gameID) }))
-                                .labelsHidden().toggleStyle(LauncherSwitchStyle()).disabled(!mod.usable)
+                            Toggle(mod.name, isOn: Binding(get: { on }, set: { changeMod(mod, on: $0) }))
+                                .labelsHidden().toggleStyle(LauncherSwitchStyle()).disabled(importingMod || changingMod || (!mod.usable && !on))
                         }
                         .padding(.horizontal, 18).padding(.vertical, 13).frame(minHeight: 52)
-                        .padTarget("mod." + mod.name, scope: "launch", radius: 10,
-                                   activate: { if mod.usable { library.setMod(mod.name, on: !game.mods.contains(mod.name), for: gameID) } },
-                                   adjust: { _ in if mod.usable { library.setMod(mod.name, on: !game.mods.contains(mod.name), for: gameID) } })
+                        .padTarget("mod." + mod.id,
+                                   scope: "launch", radius: 10, activate: { changeMod(mod, on: !on) },
+                                   adjust: { direction in changeMod(mod, on: direction > 0) })
                         divider
                     }
                 }
                 if list.isEmpty { divider }
                 HStack(spacing: 10) {
+                    Text(loc.t(importingMod ? "launch.modImporting" : "launch.modImportNote"))
+                        .font(.manrope(12)).foregroundStyle(LauncherPalette.secondaryText).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button(loc.t("launch.modImport")) { pickMod(into: directory) }
+                        .buttonStyle(LauncherSecondaryButtonStyle()).fixedSize().disabled(importingMod || changingMod)
+                        .padTarget("mods.import", scope: "launch") { pickMod(into: directory) }
+                }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                if let modError {
+                    Text(modError).font(.manrope(12)).foregroundStyle(LauncherPalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 18).padding(.bottom, 12)
+                }
+                divider
+                HStack(spacing: 10) {
                     Spacer()
                     Button(loc.t("launch.modsRefresh")) { modsRevision += 1 }
                         .padTarget("mods.refresh", scope: "launch") { modsRevision += 1 }
-                    Button(loc.t("launch.modsOpen")) { openModsFolder() }
-                        .padTarget("mods.open", scope: "launch") { openModsFolder() }
+                    Button(loc.t("launch.modsOpen")) { openModsFolder(directory) }
+                        .padTarget("mods.open", scope: "launch") { openModsFolder(directory) }
                     Button(loc.t("launch.savesShow")) { showSaves(game) }
                         .padTarget("mods.saves", scope: "launch") { showSaves(game) }
                 }
@@ -559,11 +574,50 @@ struct LaunchOptionsView: View {
         NSWorkspace.shared.open(folder)
     }
 
-    private func openModsFolder() {
-        guard let folder = modsFolder else { return }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(folder)
+    private func openModsFolder(_ directory: ModDirectory) {
+        modError = nil
+        do {
+            if !NSWorkspace.shared.open(try directory.revealFolder()) { modError = loc.t("launch.modRevealFailed") }
+        } catch { modError = modErrorMessage(error, t: loc.t) }
         modsRevision += 1
+    }
+
+    private func changeMod(_ mod: ModDirectory.Entry, on: Bool) {
+        guard !importingMod, !changingMod, let game,
+              (!mod.parked && game.mods.contains(mod.name)) != on, mod.usable || !on else { return }
+        modError = nil
+        changingMod = true
+        Task { @MainActor in
+            do {
+                try await library.setMod(mod, on: on, for: gameID) { titleID in gameStarting() || SaveTransfer.runningOnMac(titleID: titleID) }
+            } catch { modError = modErrorMessage(error, t: loc.t) }
+            changingMod = false
+            modsRevision += 1
+        }
+    }
+
+    private func pickMod(into directory: ModDirectory) {
+        guard !importingMod, !changingMod else { return }
+        let panel = NSOpenPanel()
+        panel.title = loc.t("launch.modImport")
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.resolvesAliases = false
+        importingMod = true
+        modError = nil
+        let complete: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let source = panel.url else { importingMod = false; return }
+            Task { @MainActor in
+                let result = await Task.detached(priority: .utility) { Result { try directory.importFolder(source) } }.value
+                if case let .failure(error) = result { modError = modErrorMessage(error, t: loc.t) }
+                importingMod = false
+                modsRevision += 1
+            }
+        }
+        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: complete) }
+        else { panel.begin(completionHandler: complete) }
     }
 
     /// The app's saves (dm/mac/launcher.c: ~/Library/Application Support/nxnative/<title ID>/), to back them up.

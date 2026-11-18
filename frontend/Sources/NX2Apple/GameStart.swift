@@ -8,19 +8,29 @@ import NXLauncher
 /// page's layout for older builds, shared saved maps for capable builds, DM_PAD_MERGE, DM_SCREEN and DM_LAUNCHER=0). Console mode plays on a TV-sized screen with a controller, so it asks for
 /// `fullscreen`, which forces DM_FULLSCREEN on whatever the game's Display setting says, and `homeMenu`, the Home menu's way back to it (#952).
 enum GameStart {
+    @MainActor static func withValidatedMods(for game: LibraryGame, folder: String,
+                                             _ ready: @escaping @MainActor ([ModDirectory.Entry]) -> Void) {
+        guard !game.mods.isEmpty else { ready([]); return }
+        let directory = game.modDirectory(library: folder)
+        let enabled = game.mods
+        Task { @MainActor in
+            let mods = await Task.detached(priority: .userInitiated) { directory.enabledEntries(enabled) }.value
+            ready(mods)
+        }
+    }
+
     @MainActor static func environment(for game: LibraryGame, library: GameLibrary, controls: ControlLayout, repo: String,
                                        labels: (String) -> String, lang: Lang = Lang.initial(), fullscreen: Bool = false, player: PlayerProfile? = nil,
                                        saves: (global: SaveGlobalSettings, game: SaveGameOverride)? = nil,
                                        sticks: StickDeadzoneSettings? = nil, homeMenu: Bool = false, launcherBundleID: String? = Bundle.main.bundleIdentifier,
                                        screen: NSScreen? = NSApp?.keyWindow?.screen ?? NSScreen.main,
-                                       defaults: UserDefaults = .standard) -> [String: String] {
+                                       defaults: UserDefaults = .standard, mods: [ModDirectory.Entry] = []) -> [String: String] {
         library.migrateLaunchOptions()
         CloudSavesMigration.run()   // before the app reads its env.txt: DM_SAVE_SYNC=icloud keeps the folder the iPhone app uses
         let settings = LaunchSetting.forMac(app: game.appPath, titleID: game.titleID, repo: repo, labels: labels) ?? []
         let overrides = game.launchEnvironment(settings).merging(game.controllerLaunchOverrides) { _, manual in manual }
         let savingEnabled = game.controllerSavingEnabled(environment: overrides)
         let mappings = SavedChoices.appReadsControllerMappings(app: game.appPath) ? game.controllerPreferences() : nil
-        let mods = GameMod.list(in: GameMod.folder(for: game, library: library.folder), titleID: game.titleID)
         var environment = game.startEnvironment(controls: controls.environment, settings: settings, mods: mods,
                                                 store: SavedChoices(app: game.appPath, titleID: game.titleID),
                                                 appReadsStore: SavedChoices.appReadsStore(app: game.appPath),

@@ -178,6 +178,14 @@ environment. Only a choice that differs from the game's tested default is kept, 
 library manifest. **Reset to tested defaults** forgets them. An app without the list
 shows none. Starting the app from Finder uses its defaults.
 
+Under **Mods**, choose **Import mod folder…** and select an extracted Switch RomFS mod.
+The launcher accepts loose replacement files, a `romfs` folder, or an Atmosphère
+`contents/<title ID>/romfs` layout for this game. It copies the replacement files and leaves
+the original alone. Archives, executable patches and mods that need a patcher or script loader
+are not supported. The copy starts disabled. Quit the game before turning a mod on or off,
+then use **Play** to start with the new selection. If two enabled mods replace the same file,
+the one higher in the list wins. Back up your saves before changing mods.
+
 ## Controls
 
 **Settings → Controls → Customize…** sets the global keyboard and controller layout.

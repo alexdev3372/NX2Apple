@@ -77,7 +77,7 @@ enum FrameTimes {
         return environment(recordTo: try? newRecording(in: folder(titleID: game.titleID, library: library)))
     }
 
-    /// A game's recordings, beside its mods (GameMod.folder).
+    /// A game's recordings, beside its mods (ModDirectory.folder).
     static func folder(titleID: String, library: String) -> URL {
         let root = library.isEmpty
             ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NS Port Builder")

@@ -107,6 +107,21 @@ extension LauncherView {
 
     private func startMacGame(_ game: LibraryGame, cloudChoice: [String: String]) {
         let currentGame = library.games.first(where: { $0.id == game.id }) ?? game
+        let generation = launchHintGeneration
+        let folder = library.folder
+        GameStart.withValidatedMods(for: currentGame, folder: folder) { mods in
+            guard launchHintGeneration == generation else { return }
+            guard let latest = library.games.first(where: { $0.id == game.id }), latest.appPath == currentGame.appPath,
+                  latest.mods == currentGame.mods, library.folder == folder else {
+                endGameLaunch()
+                launchError = loc.t("launch.modStale")
+                return
+            }
+            openMacGame(latest, cloudChoice: cloudChoice, mods: mods)
+        }
+    }
+
+    private func openMacGame(_ currentGame: LibraryGame, cloudChoice: [String: String], mods: [ModDirectory.Entry]) {
         let configuration = NSWorkspace.OpenConfiguration()
         let environment = GameStart.environment(
             for: currentGame,
@@ -117,7 +132,8 @@ extension LauncherView {
             lang: loc.lang,
             player: stores.players.active,
             saves: (stores.saveSettings.global, stores.saveSettings.game(currentGame.titleID)),
-            sticks: stores.sticks.settings
+            sticks: stores.sticks.settings,
+            mods: mods
         )
         let withRecording = environment
             .merging(FrameTimes.recordingEnvironment(for: currentGame, library: library.folder)) { $1 }

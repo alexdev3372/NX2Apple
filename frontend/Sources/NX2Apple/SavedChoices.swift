@@ -188,7 +188,7 @@ extension LibraryGame {
     /// override a choice made elsewhere. An older app does not read it, so it is given the saved non-default choices as variables, as
     /// this launcher always did. The rest is the Controls page's layout, what only this launcher has (Display mode), the mods, and
     /// DM_LAUNCHER=0 (this launcher is the settings window, so the app's own is skipped; saved choices still apply).
-    func startEnvironment(controls: [String: String], settings: [LaunchSetting], mods: [GameMod],
+    func startEnvironment(controls: [String: String], settings: [LaunchSetting], mods: [ModDirectory.Entry],
                           store: SavedChoices? = nil, appReadsStore: Bool = true,
                           controllerStore: ControllerPreferences? = nil, savingEnabled: Bool = true) -> [String: String] {
         var environment = controllerStore?.launchControls(controls, savingEnabled: savingEnabled) ?? controls

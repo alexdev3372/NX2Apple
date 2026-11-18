@@ -85,6 +85,7 @@ struct ConsolePadSnapshot: Equatable {
     /// The check of the cloud's save before a start, and the game it is for (LiveConsoleDriver+CloudSave.swift). Tests give it a fake download.
     var cloudGate = CloudSaveGate() { didSet { watchCloudGate() } }
     var cloudGameID: String?
+    private var launchAttempt = UUID()
     var cloudWatch: AnyCancellable?
     var timeoutTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
@@ -237,31 +238,51 @@ struct ConsolePadSnapshot: Equatable {
     func focus(_ gameID: String) { state.focus(gameID); loadHero() }
 
     func play(_ gameID: String) {
+        guard state.startingGameID == nil else { return }
         if state.pausedGameID == gameID { resume(gameID); return }   // the paused game plays on where it was (#952)
         state.play(gameID)
         guard state.startingGameID == gameID, let game = library.games.first(where: { $0.id.uuidString == gameID }) else { return }
-        let environment = GameStart.environment(for: game, library: library, controls: controls, repo: repo(), labels: labels, lang: lang(), fullscreen: true, player: player(), saves: saves(game.titleID), sticks: sticks(), homeMenu: true)   // the Home menu's way back here (#952)
-            .merging(pointerHidden() ? ["DM_CURSOR_HIDDEN": "1"] : [:]) { $1 }   // the game is a new process: without this its pointer shows until its own idle wait ends
-            .merging(FrameTimes.recordingEnvironment(for: game, library: library.folder)) { $1 }   // a frame-time recording, as the desktop Play adds (FrameTimes.swift)
+        let environment = GameStart.environment(for: game, library: library, controls: controls, repo: repo(), labels: labels, lang: lang(), fullscreen: true, player: player(), saves: saves(game.titleID), sticks: sticks(), homeMenu: true)
+            .merging(pointerHidden() ? ["DM_CURSOR_HIDDEN": "1"] : [:]) { $1 }
+            .merging(FrameTimes.recordingEnvironment(for: game, library: library.folder)) { $1 }
+        let attempt = UUID()
+        launchAttempt = attempt
         state.starting = .preparing
         cloudGameID = gameID
         cloudGate.begin(game, proceed: { [weak self] choice in   // the cloud's save first (LiveConsoleDriver+CloudSave.swift, #957)
-            guard let self, self.state.startingGameID == gameID else { return }
+            guard let self, self.launchAttempt == attempt, self.state.startingGameID == gameID else { return }
             self.state.starting = .preparing
             self.prepareLaunch { [weak self] in
-                guard let self else { return }
+                guard let self, self.launchAttempt == attempt else { return }
                 guard self.state.startingGameID == gameID else { self.gameEnded(); return }
-                let latest = self.library.games.first(where: { $0.id == game.id }) ?? game
-                MacGameMode.shared.prepareForLaunch(enabled: latest.macGameModeDesired, forApp: latest.appPath) { [weak self] error in
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        guard self.state.startingGameID == gameID else { self.gameEnded(); return }
-                        if let error { self.state.returnFromGame(); self.gameEnded(); self.showToast(error.localizedDescription, kind: "error"); return }
-                        self.openGame(latest, environment: environment.merging(choice) { $1 }, gameID: gameID)
-                    }
+                self.prepareModLaunch(game, environment: environment, choice: choice, attempt: attempt)
+            }
+        }, ended: { [weak self] in
+            if let self, self.launchAttempt == attempt { self.state.returnFromGame() }
+        })
+    }
+
+    private func prepareModLaunch(_ game: LibraryGame, environment: [String: String], choice: [String: String], attempt: UUID) {
+        let gameID = game.id.uuidString
+        let snapshot = library.games.first(where: { $0.id == game.id }) ?? game
+        let folder = library.folder
+        GameStart.withValidatedMods(for: snapshot, folder: folder) { [weak self] mods in
+            guard let self, self.launchAttempt == attempt else { return }
+            guard self.state.startingGameID == gameID else { self.gameEnded(); return }
+            guard let game = self.library.games.first(where: { $0.id == game.id }), game.appPath == snapshot.appPath,
+                  game.mods == snapshot.mods, self.library.folder == folder else {
+                self.state.returnFromGame(); self.gameEnded(); self.showToast(self.t("launch.modStale")); return
+            }
+            let launchEnvironment = environment.merging(game.modEnvironment(mods)) { $1 }.merging(choice) { $1 }
+            MacGameMode.shared.prepareForLaunch(enabled: game.macGameModeDesired, forApp: game.appPath) { [weak self] error in
+                MainActor.assumeIsolated {
+                    guard let self, self.launchAttempt == attempt else { return }
+                    guard self.state.startingGameID == gameID else { self.gameEnded(); return }
+                    if let error { self.state.returnFromGame(); self.gameEnded(); self.showToast(error.localizedDescription, kind: "error"); return }
+                    self.openGame(game, environment: launchEnvironment, gameID: gameID)
                 }
             }
-        }, ended: { [weak self] in self?.state.returnFromGame() })
+        }
     }
 
     private func openGame(_ game: LibraryGame, environment: [String: String], gameID: String) {

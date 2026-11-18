@@ -3,7 +3,7 @@ import Foundation
 /// What console mode brings over from the desktop launcher, as plain values the driver fills: a game's mods and cheats (switched on
 /// and off here, put in place on the desktop), the launcher's own switches on the menu's pages and the app's update. Nothing here builds, picks a folder or reads a file: the driver does (LiveConsoleDriver+Desktop).
 
-/// A mod in the game's mods folder (GameMod). One that changes the game's code (exefs) cannot be used and shows why.
+/// A mod in the game's mods folder (ModDirectory). A mod without supported RomFS files cannot be used.
 struct ConsoleMod: Identifiable, Equatable {
     var name: String
     var usable: Bool

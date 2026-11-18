@@ -325,7 +325,8 @@ struct LauncherView: View {
             if let id = optionsFor { LaunchOptionsView(m: m, library: library, gameID: id, globalControls: controls, controllerMappingPresentation: $controllerMappingOpen,
                               onBuild: { game in DispatchQueue.main.async { configureBuild(game) } },
                               openCheats: { id in optionsFor = nil; DispatchQueue.main.async { cheatsFor = id } },
-                              openSaves: { id in optionsFor = nil; DispatchQueue.main.async { savesFor = id } }).environmentObject(padFocus).environmentObject(stores.saveSettings).environmentObject(stores.players).launcherDropdownHost() }
+                              openSaves: { id in optionsFor = nil; DispatchQueue.main.async { savesFor = id } },
+                              gameStarting: { launching && launchingGameID == id }).environmentObject(padFocus).environmentObject(stores.saveSettings).environmentObject(stores.players).launcherDropdownHost() }
         }
         .sheet(isPresented: $controlsOpen) { ControlsView(layout: controls, cancelRequest: controlsCancelRequest).environmentObject(padFocus).launcherDropdownHost() }
         .sheet(isPresented: Binding(get: { freeSpaceFor != nil }, set: { if !$0 { freeSpaceFor = nil } })) {

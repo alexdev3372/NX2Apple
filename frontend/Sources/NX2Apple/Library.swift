@@ -121,8 +121,8 @@ extension LibraryGame {
 
     /// DM_ROMFS_OVERLAY for the mods switched on that can be used, in the list's order: where two replace one file, the
     /// one higher in the list wins (the host looks in the folders in order).
-    func modEnvironment(_ available: [GameMod]) -> [String: String] {
-        let paths = available.filter { mods.contains($0.name) }.compactMap(\.romfs)
+    func modEnvironment(_ available: [ModDirectory.Entry]) -> [String: String] {
+        let paths = available.filter { mods.contains($0.name) }.compactMap(\.overlay)
         return paths.isEmpty ? [:] : ["DM_ROMFS_OVERLAY": paths.joined(separator: ":")]
     }
 }
@@ -206,6 +206,10 @@ final class GameLibrary: ObservableObject {
 
     /// False when the file could not be written: `error` says why.
     @discardableResult func save() -> Bool {
+        save(games: games)
+    }
+
+    private func save(games: [LibraryGame]) -> Bool {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(Snapshot(games: games, folder: folder, folders: folders)).write(to: file, options: .atomic)
@@ -596,11 +600,21 @@ final class GameLibrary: ObservableObject {
     }
 
     /// A mod switched on or off for one game.
-    func setMod(_ name: String, on: Bool, for id: UUID) {
-        guard var game = games.first(where: { $0.id == id }) else { return }
-        game.mods.removeAll { $0 == name }
-        if on { game.mods.append(name) }
-        upsert(game)
+    @MainActor func setMod(_ entry: ModDirectory.Entry, on: Bool, for id: UUID,
+                           isRunning: (String) -> Bool = SaveTransfer.runningOnMac) async throws {
+        guard let game = games.first(where: { $0.id == id }) else { throw ModDirectory.Failure.stale }
+        guard !isRunning(game.titleID) else { throw ModDirectory.Failure.gameRunning }
+        let root = folder
+        let directory = game.modDirectory(library: root)
+        if on { try await Task.detached(priority: .userInitiated) { try directory.validateForEnable(entry) }.value }
+        guard let index = games.firstIndex(where: { $0.id == id && $0.titleID == game.titleID }),
+              folder == root else { throw ModDirectory.Failure.stale }
+        guard !isRunning(game.titleID) else { throw ModDirectory.Failure.gameRunning }
+        var updated = games
+        updated[index].mods.removeAll { $0 == entry.name }
+        if on { updated[index].mods.append(entry.name) }
+        try directory.setEnabled(on, entry: entry) { save(games: updated) }
+        games = updated
     }
 
     /// The one-time move of the launch options an earlier version kept in the library file into each app's preferences domain

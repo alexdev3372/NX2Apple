@@ -1,39 +1,6 @@
 import Foundation
 import NXCore
 
-/// A folder in the game's mods folder: RomFS files that replace the game's own (DM_ROMFS_OVERLAY, hle_fs.c). The files are
-/// found in <mod>/romfs, in an Atmosphere layout (<mod>/atmosphere/contents/<title ID>/romfs, <mod>/contents/<title ID>/romfs)
-/// or in the folder itself. A mod with only exefs/ changes the game's code, which the rewriter does not take: listed, not usable.
-struct GameMod: Identifiable, Equatable {
-    let name: String
-    let romfs: String?
-    var id: String { name }
-    var usable: Bool { romfs != nil }
-
-    static func folder(for game: LibraryGame, library: String) -> URL {
-        let root = library.isEmpty
-            ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NS Port Builder")
-            : URL(fileURLWithPath: library)
-        return root.appendingPathComponent("mods").appendingPathComponent(game.titleID)
-    }
-
-    static func list(in folder: URL, titleID: String) -> [GameMod] {
-        let fm = FileManager.default
-        let names = ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
-        }
-        return names.compactMap { name in
-            var dir: ObjCBool = false
-            let mod = folder.appendingPathComponent(name)
-            guard fm.fileExists(atPath: mod.path, isDirectory: &dir), dir.boolValue else { return nil }
-            let candidates = ["romfs", "atmosphere/contents/\(titleID)/romfs", "contents/\(titleID)/romfs"].map { mod.appendingPathComponent($0).path }
-            if let found = candidates.first(where: { fm.fileExists(atPath: $0) }) { return GameMod(name: name, romfs: found) }
-            let top = ((try? fm.contentsOfDirectory(atPath: mod.path)) ?? []).filter { !$0.hasPrefix(".") }
-            let codeOnly = top.allSatisfy { ["exefs", "atmosphere", "contents"].contains($0.lowercased()) } && !top.isEmpty
-            return GameMod(name: name, romfs: codeOnly || top.isEmpty ? nil : mod.path)
-        }
-    }
-}
 
 /// A file inside a library root that could not become a library entry on its own during folder discovery.
 struct SkippedLibraryItem: Identifiable, Equatable, Sendable {
