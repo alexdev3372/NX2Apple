@@ -1,0 +1,529 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Aguilar <291639929+alexdev3372@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:52:18 -0800
+Subject: [PATCH] skyrim: offer an opt-in experimental 60 fps mode
+
+Upstream-Status: fork-only
+Reason: Mac opt-in and an explicitly enabled local iOS diagnostic retain stock 30 fps by default and clear state on shell Quit.
+Issue: seedds/nxnative#148
+---
+ dm/games/game.py                       |  1 +
+ dm/games/settings.py                   | 18 +++++
+ dm/games/settings.tsv                  |  1 +
+ dm/gfx/nvn/hle_nvn.c                   | 11 ++-
+ dm/gfx/tests/Makefile                  |  8 ++-
+ dm/gfx/tests/skyrim_fps_fixture.inc    | 98 ++++++++++++++++++++++++++
+ dm/gfx/tests/skyrim_fps_stubs.c        |  4 ++
+ dm/gfx/tests/t_link_ticks.m            |  7 +-
+ dm/host/hle_fpslock.c                  | 77 ++++++++++++++++++++
+ dm/host/main.c                         |  4 ++
+ dm/ios/tools/build_ipa.sh              |  7 +-
+ dm/tools/tests/test_skyrim_settings.py | 56 +++++++++++++++
+ 12 files changed, 285 insertions(+), 7 deletions(-)
+ create mode 100644 dm/gfx/tests/skyrim_fps_fixture.inc
+ create mode 100644 dm/gfx/tests/skyrim_fps_stubs.c
+ create mode 100644 dm/tools/tests/test_skyrim_settings.py
+
+diff --git a/dm/games/game.py b/dm/games/game.py
+index ae07d54..7c43674 100644
+--- a/dm/games/game.py
++++ b/dm/games/game.py
+@@ -238,6 +238,7 @@ def header_one(g):
+          f'#define DM_GAME_MEM_STACK {g.int("mem_stack"):#x}ull',
+          f'#define DM_GAME_APP_POOL {g.int("app_pool"):#x}ull',
+          f'#define DM_GAME_MEM_USED {int(g.get("mem_used", "0x4000000"), 0):#x}ull',   # used memory reported beside the heap (hle_svc.c GetInfo UsedMemorySize)
++         f'#define DM_GAME_SKYRIM_FPS_EXPERIMENT {int(g.get("skyrim_fps_experiment", "off") == "on")}',
+          f'#define DM_GAME_SYS_RESOURCE {int(g.get("sys_resource", "0x2000000"), 0):#x}ull',   # the NPDM's system resource size (hle_svc.c GetInfo TotalSystemResourceSize; 0 = no virtual address memory)
+          f'#define DM_GAME_ARGS {q(g.get("game_args", ""))}',   # game arguments when the command line gives none (main.c; Octopath Traveler 0: Unreal's -SwitchVirtualAddressSpaceSize=)
+          f'#define DM_GAME_ENV {q(g.get("game_env", ""))}',   # KEY=VALUE pairs getenv answers (hle_os.c; Absolum: .NET's DOTNET_GCRegionRange)
+diff --git a/dm/games/settings.py b/dm/games/settings.py
+index 9a821d0..af0d359 100644
+--- a/dm/games/settings.py
++++ b/dm/games/settings.py
+@@ -56,6 +56,20 @@ def fixups_keys(path):   # '# KEY<TAB>value' header rows of a rewriter table, as
+     return {m[1]: m[2].strip() for m in re.finditer(r'^# (\w+)\t(.*)$', path.read_text(encoding='utf-8'), re.M)}
+ 
+ 
++def skyrim_fps_supported(patched, main_keys):
++    # Match the runtime guard in hle_fpslock.c. Never trust a fixups feature flag.
++    if main_keys.get('BUILD_ID') != '0c0cac3fcf0f0beb9dcf79cb68e30739': return False
++    if fixups_keys(patched / 'sdk.fixups.tsv').get('BUILD_ID') != '2aef2cffb104ee7c9e212fd2f4c731e9': return False
++    try:
++        with (patched / 'main.patched.bin').open('rb') as f:
++            for off, word in ((0xbe19dc, 0xf945ed08), (0xbe19e8, 0xbd400902), (0xbe19f8, 0xf945f129), (0xbe1a04, 0xbd400920)):
++                f.seek(off)
++                if f.read(4) != word.to_bytes(4, 'little'): return False
++    except OSError:
++        return False
++    return True
++
++
+ UNKNOWN_LANGUAGES = 'This game\'s files do not list its languages, so some of these may not be in the game. It may then show another one.'
+ 
+ 
+@@ -65,6 +79,10 @@ def build(gid, patched, control):
+     g = game.load(gid)
+     macros = dict(re.findall(r'^#define (DM_GAME_\w+) (.*)$', game.header_one(g), re.M))   # the host's own defaults, as it is compiled for this game
+     keys = fixups_keys(Path(patched) / 'main.fixups.tsv')
++    keys.pop('SKYRIM_FPS', None)
++    skyrim_fps = platform == 'mac' or os.environ.get('SETTINGS_SKYRIM_FPS_PROTOTYPE') == '1'
++    if skyrim_fps and g.get('skyrim_fps_experiment', 'off') == 'on' and skyrim_fps_supported(Path(patched), keys):
++        keys['SKYRIM_FPS'] = '1'
+     have = nacp.languages(control)
+     langs = [(c, n) for c, n in nacp.LANGUAGES if not have or c in have]   # no list (a dump or a NUP has no control data, none of its packages may): any language may be the game's, as DM_LANG and the NSP script's check take it
+ 
+diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
+index 91c0017..cf8ba75 100644
+--- a/dm/games/settings.tsv
++++ b/dm/games/settings.tsv
+@@ -16,6 +16,7 @@
+ #             level=basic  a setting a front end shows first;  needs=<VAR>=<value>  a sub-setting, drawn only while the row that sets <VAR> has that value
+ DM_FPS_TARGET	choice	30=30 fps,60=60 fps,120=120 fps?DM_GAME_FPS_MAX==120&platform:mac	DM_GAME_FPS_TARGET	DM_GAME_FPS_TARGET!=0	Game	Frame rate		level=basic
+ DM_PRESENT_INTERVAL	choice	game=30 fps,display=60 fps	display	DM_GAME_PRESENT_DISPLAY==1&DM_GAME_FPS_TARGET==0	Game	Frame rate		level=basic
++DM_SKYRIM_FPS	choice	30=30 fps (original),60=60 fps (experimental)	30	gfxapi:nvn&fixups:SKYRIM_FPS	Game	Frame rate	Applies on next launch. 60 fps can use more power and lower dynamic resolution. Physics and device performance are unverified.	level=basic
+ DM_DYNAMIC_RESOLUTION	toggle	-	0	fixups:DYNAMIC_RESOLUTION	Game	Dynamic resolution	Lets the game lower its resolution under load. Turn off to keep full resolution for the selected console mode.
+ DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	Render scale		level=basic
+ DM_OPMODE	choice	1=Docked,0=Handheld	DM_GAME_OPMODE	always	Game	Console mode		level=basic
+diff --git a/dm/gfx/nvn/hle_nvn.c b/dm/gfx/nvn/hle_nvn.c
+index 18a57a1..75a8005 100644
+--- a/dm/gfx/nvn/hle_nvn.c
++++ b/dm/gfx/nvn/hle_nvn.c
+@@ -2349,6 +2349,7 @@ __attribute__((weak)) int dm_fps_step_max;   // loader.c: the largest step the s
+ __attribute__((weak)) void dm_fps_lock_tick(void) {}   // hle_fpslock.c: engine frame limits in game memory (Monster Hunter Rise); graphics unit tests have no host
+ static int g_engine_stub = 1;   // the weak dm_fps_lock_engine's answer, for graphics unit tests (t_nvn sets it)
+ __attribute__((weak)) int dm_fps_lock_engine(void) { return g_engine_stub; }   // hle_fpslock.c: the host writes fps_target into an engine limiter of this main
++__attribute__((weak)) int dm_skyrim_fps_60(void) { return 0; }
+ __attribute__((weak)) void dm_ue_cvar_tick(void) {}   // hle_uecvar.c: Unreal's texture streaming pool (profile ue_texture_pool)
+ int dm_movie_hz(void);   // hle_movie.c: the picture rate of the movie playing, 0 when none; graphics unit tests have no movie decoder
+ // Thermal cap (iOS): while the device is thermally serious or worse (NSProcessInfo thermalState >= 2) the frame step holds 30 fps, and it goes back to the cap after the device
+@@ -2428,6 +2429,9 @@ static int display_mode(void) {   // present_cfg's choice, also before its first
+     const char *m = getenv("DM_PRESENT_INTERVAL"); return m ? !strcmp(m, "display") : dm_prof()->present_display;
+ }
+ static int fps_present_cap(void) {
++    // Shared-shell Skyrim prototype: no simulation step hook. Keep the stock 30
++    // cadence during movies or thermal fallback; the tighter DRS budget remains.
++    if (dm_skyrim_fps_60()) return thermal_capped() || dm_movie_hz() ? 30 : 60;
+     if (dm_fps_state || fps_high()) return fps_step_cap();
+     if (g_present_cap < 0) {
+         const char *e=getenv("DM_FPS_TARGET");int t=e?atoi(e):dm_prof()->fps_target;
+@@ -2455,7 +2459,7 @@ static void present_cfg(const win_t *o) {
+     if (g_hz >= 0) return;
+     // The interval mode comes from the game profile (present_interval, default game): whether frames follow the present interval the game sets depends on whether the game's logic counts frames, which differs per game. Environment variables override it, and can override the fixed 60 Hz.
+     int scr = mtl_display_hz();
+-    const char *e = getenv("DM_PRESENT_HZ"); g_hz = e ? atoi(e) : fstep_hz();
++    const char *e = getenv("DM_PRESENT_HZ"); g_hz = dm_skyrim_fps_60() ? 60 : e ? atoi(e) : fstep_hz();
+     if (!g_hz) LOG("[nvn] [WARNING] DM_PRESENT_HZ=0: frame rate uncapped, frame pacing unlike the device, UI logic may drift (for profiling only, not for verdicts / cross-checks)");
+     // Cut (intentional deviation from the original game's behavior): with DM_PRESENT_INTERVAL=display the present interval set by the game is not followed and one frame is presented per display-link tick,
+     // with a fixed hard floor of 60 fps; the logic stays at 25 ticks, and the client's frame-counted UI logic is unaffected -
+@@ -2465,7 +2469,7 @@ static void present_cfg(const win_t *o) {
+     LOG("[nvn] present tick %d Hz, interval mode %s (%s; present interval set by the game %d; %s)", g_hz, g_display_mode ? "display (one frame per tick, a cut)" : "game (original semantics)",
+         m ? "DM_PRESENT_INTERVAL" : "game profile present_interval", o->interval, scr > 0 ? "window" : "no window");
+ }
+-static int present_itv(const win_t *o) { int c = fps_present_cap(), k = atomic_load(&g_fs_k); return c ? (k && fstep_on() ? k : fstep_hz() / c) : g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; }   // vsyncs per frame that presentation follows
++static int present_itv(const win_t *o) { int c = fps_present_cap(), k = atomic_load(&g_fs_k); return dm_skyrim_fps_60() && c ? 60 / c : c ? (k && fstep_on() ? k : fstep_hz() / c) : g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; }   // vsyncs per frame that presentation follows
+ // Present interval 0 swaps without waiting for a vsync on Horizon: the window's acquire waits only for a texture the display has let go of, the display shows the newest frame at each
+ // vsync, and the game paces itself (or runs as fast as it can; the Switch's unlocked-frame-rate mods set interval 0 to go past 60). The acquire took it as 1 and waited a display
+ // tick each frame. Ori and the Blind Forest: Definitive Edition sets Unity's vSyncCount to 0 only for its shader prewarm behind the first loading screen and back to 1 after it: the
+@@ -2478,11 +2482,12 @@ static int present_unpaced(const win_t *o) { present_cfg(o); return o->interval
+ // whatever the game set, and answering the game's own let it pace for that interval itself. Luigi's Mansion 3 (30 fps on the Switch, interval 2) reads the newest frame-history entry
+ // and the interval before each present (main+0xb7a4b8): while that frame is not shown it sleeps 16.67 ms per vsync of the interval, and once shown it waits until (interval - 1)
+ // vsyncs after its present time. At 60 fps (fps_target 60, present_interval display) that held it at about 25 fps once vi::ListFrameHistory listed the presents (issue #1705)
+-static int window_interval(const win_t *o) { present_cfg(o); return g_display_mode ? present_itv(o) : o->interval; }
++static int window_interval(const win_t *o) { present_cfg(o); return g_display_mode || dm_skyrim_fps_60() ? present_itv(o) : o->interval; }
+ // The acquire's wait for the display link: the present interval's vsyncs (60 Hz units), or with present_interval display above 60 Hz (DM_PRESENT_HZ=120 on a 120 Hz link,
+ // DM_PRESENT_LINK=2) one tick of the present rate, as many link ticks as that takes. Before, a 120 Hz link waited two ticks per frame there, and display mode never went past 60 fps
+ static int link_wait(const win_t *o, uint64_t timeout_ns) {
+     static int hz_was, rate_was, remainder;   // acquire thread only, as with mtl_link_wait_ticks
++    if (dm_skyrim_fps_60()) return mtl_link_wait_tick(present_itv(o), timeout_ns);
+     if (fps_high()) { int t = present_itv(o) * mtl_link_rate() / 120; return mtl_link_wait_ticks(t < 1 ? 1 : t, timeout_ns); }   // the hold, in ticks of 1/120 s, on a link at 120 or 60 Hz
+     int hz = g_display_mode && !fps_present_cap() && g_hz > 60 ? g_hz : 0, rate = mtl_link_rate();
+     if (hz != hz_was || rate != rate_was) { remainder = 0; hz_was = hz; rate_was = rate; }
+diff --git a/dm/gfx/tests/Makefile b/dm/gfx/tests/Makefile
+index 6d4affc..541615f 100644
+--- a/dm/gfx/tests/Makefile
++++ b/dm/gfx/tests/Makefile
+@@ -134,8 +134,12 @@ check_t_perf_order: t_perf_order
+ 	MTL_DEBUG_LAYER=1 ./t_perf_order
+ 	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_perf_order
+ 	DM_NVN_FAST_WAKE=0 DM_NVN_SLICE_MERGE=0 DM_NVN_CS_HOIST=0 MTL_DEBUG_LAYER=1 ./t_perf_order
+-t_link_ticks: t_link_ticks.m $(MTL_T_DEP)
+-	clang $(CFLAGS) -fobjc-arc -o $@ t_link_ticks.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
++t_link_ticks: t_link_ticks.m skyrim_fps_fixture.inc skyrim_fps_stubs.c ../../host/hle_fpslock.c ../../host/hle_lifecycle.c $(MTL_T_DEP)
++	clang $(CFLAGS) -fobjc-arc -o $@ t_link_ticks.m skyrim_fps_stubs.c ../../host/hle_fpslock.c ../../host/hle_lifecycle.c $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
++.PHONY: check_t_link_ticks
++check_t_link_ticks: t_link_ticks
++	./t_link_ticks
++	./t_link_ticks skyrim
+ t_cpu_tex: t_cpu_tex.m $(MTL_T_DEP)
+ 	clang $(CFLAGS) -fobjc-arc -o $@ t_cpu_tex.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
+ .PHONY: check_t_cpu_tex
+diff --git a/dm/gfx/tests/skyrim_fps_fixture.inc b/dm/gfx/tests/skyrim_fps_fixture.inc
+new file mode 100644
+index 0000000..a7e5783
+--- /dev/null
++++ b/dm/gfx/tests/skyrim_fps_fixture.inc
+@@ -0,0 +1,98 @@
++// Production FPS writer, NVN pacing/readback and host Quit. Synthetic guest pages and ticks.
++void dm_skyrim_fps_begin(int enabled);
++int dm_skyrim_fps_60(void);
++void dm_host_teardown_for_shell(void);
++static module_t modules[2];
++enum { IMGSZ = 0x3400000, MAX_OFF = 0x3357fb0, MIN_OFF = 0x3357fc8 };
++static uint8_t *active_image;
++static unsigned parked, releases;
++void dm_cheats_exit(void) {}
++void dm_vsync_stop_all(void) {}
++void dm_audio_stop_all(void) {}
++void dm_audio_suspend(int on) { (void)on; }
++int dm_teardown_is_guest_thread(void) { return 0; }
++void dm_teardown_park_self(void) { abort(); }
++void dm_threads_park_all(void) { parked++; }
++void dm_guest_memory_release(int unmap_as) {
++    assert(unmap_as && parked == releases + 1);
++    assert(!dm_skyrim_fps_60() && "Quit must clear FPS state before unmapping");
++    assert(!mprotect(active_image, IMGSZ, PROT_NONE));
++    releases++;
++}
++void dm_modules_teardown(void) { g_mod = NULL; g_nmod = 0; }
++void hlecount_flush(void) {}
++void dm_rec_finish(void) {}
++extern int test_movie, test_thermal;
++static int skyrim_case(void) {
++    static const struct { const char *choice; int fault; } launches[] = {
++        {"30", 0}, {"60", 0}, {"30", 0}, {"60", 0}, {NULL, 0}, {"60fps", 0},
++        {"60", 1}, {"60", 2}, {"60", 3}, {"60", 4}, {"60", 5}, {"60", 6}, {"60", 7},
++    };
++    enum { n = sizeof launches / sizeof *launches };
++    uint8_t *images[n];
++    setenv("DM_FPS_TARGET", "0", 1); setenv("DM_RT", "0", 1); setenv("DM_PRESENT_SNAP", "0", 1);
++    unsetenv("DM_THERMAL_CAP");
++    g_dm_present_link = 1; g_link = (CAMetalDisplayLink *)[NSObject new]; g_link_mode = 1;
++    for (size_t i = 0; i < n; i++) {
++        active_image = images[i] = mmap(NULL, IMGSZ, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++        assert(active_image != MAP_FAILED);
++        for (size_t j = 0; j < i; j++) assert(images[j] != active_image);
++        memset(modules, 0, sizeof modules); g_mod = modules; g_nmod = 2;
++        strcpy(modules[0].name, "main"); strcpy(modules[0].build_id, "0c0cac3fcf0f0beb9dcf79cb68e30739");
++        strcpy(modules[1].name, "sdk"); strcpy(modules[1].build_id, "2aef2cffb104ee7c9e212fd2f4c731e9");
++        modules[0].base = modules[1].base = active_image;
++        modules[0].loaded = modules[1].loaded = 1;
++        modules[0].size = IMGSZ; modules[0].text_end = 0x1265968; modules[0].data_off = 0x1a04000;
++        *(uint32_t *)(active_image + 0xbe19dc) = 0xf945ed08;
++        *(uint32_t *)(active_image + 0xbe19e8) = 0xbd400902;
++        *(uint32_t *)(active_image + 0xbe19f8) = 0xf945f129;
++        *(uint32_t *)(active_image + 0xbe1a04) = 0xbd400920;
++        int fault = launches[i].fault;
++        if (fault == 2) modules[0].build_id[31] = '8';
++        if (fault == 3) modules[1].build_id[31] = '8';
++        if (fault == 4) *(uint32_t *)(active_image + 0xbe1a04) = 0;
++        if (fault == 5) modules[0].size = MIN_OFF;
++        if (fault == 6) modules[0].data_off = MAX_OFF + 4;
++        if (fault == 7) g_nmod = 1;
++        if (launches[i].choice) setenv("DM_SKYRIM_FPS", launches[i].choice, 1); else unsetenv("DM_SKYRIM_FPS");
++        dm_skyrim_fps_begin(fault != 1);
++        int fast = i == 1 || i == 3;
++        assert(dm_skyrim_fps_60() == fast && "validate this launch only");
++        setenv("DM_SKYRIM_FPS", fast ? "30" : "60", 1);  // not a live toggle
++        float *max = (float *)(active_image + MAX_OFF), *min = (float *)(active_image + MIN_OFF);
++        dm_fps_lock_tick(); assert(*max == 0 && *min == 0);
++        *max = 33; *min = 28;
++        dm_fps_lock_tick(); assert(*max == 33 && *min == 28);
++        for (int reload = 0; reload < 2; reload++) {
++            *max = 33; *min = 30;
++            dm_fps_lock_tick(); assert(*max == (fast ? 16.5f : 33) && *min == (fast ? 15 : 30));
++        }
++        win_t win = {.interval = 2};
++        acquire_ticks(60, 0, 2, fast ? 1 : 2, "Skyrim acquire after same-process launch");
++        assert(h_nvnWindowGetPresentInterval((NVNwindow *)&win) == (fast ? 1 : 2));
++        assert(present_period(&win) == (fast ? 1000000000ull / 60 : 2000000000ull / 60));
++        if (fast) assert(nvn_game_fps() == 60);
++        if (i == 3) {
++            test_movie = 1;
++            acquire_ticks(60, 0, 2, 2, "movie fallback");
++            assert(nvn_game_fps() == 30 && h_nvnWindowGetPresentInterval((NVNwindow *)&win) == 2);
++            test_movie = 0;
++            test_thermal = 2; test_now += 1000000000ull;
++            acquire_ticks(60, 0, 2, 2, "serious-thermal fallback");
++            test_thermal = 0; test_now += 1000000000ull;
++            assert(nvn_game_fps() == 30);
++            test_now += 31000000000ull;
++            acquire_ticks(60, 0, 2, 1, "back to 60 after thermal recovery");
++        }
++        // The fake CAMetalDisplayLink must not enter the real Metal shutdown.
++        g_link = nil;
++        dm_host_teardown_for_shell();
++        dm_fps_lock_tick();  // late call; old guest mapping is inaccessible, no segment restore performed
++        assert(!g_mod && !g_nmod && releases == i + 1);
++        dm_gfx_suspend(0);
++        g_dm_present_link = 1; g_link = (CAMetalDisplayLink *)[NSObject new]; g_link_mode = 1;
++    }
++    for (size_t i = 0; i < n; i++) assert(!munmap(images[i], IMGSZ));
++    printf("Skyrim focused: %d launches, %u host Quit calls, PID %d, %d failed\n", n, releases, getpid(), failed);
++    return failed != 0;
++}
+diff --git a/dm/gfx/tests/skyrim_fps_stubs.c b/dm/gfx/tests/skyrim_fps_stubs.c
+new file mode 100644
+index 0000000..3f5d1ce
+--- /dev/null
++++ b/dm/gfx/tests/skyrim_fps_stubs.c
+@@ -0,0 +1,4 @@
++// Controlled inputs to the actual NVN movie and thermal pacing paths.
++int test_movie, test_thermal;
++int dm_movie_hz(void) { return test_movie ? 30 : 0; }
++int dm_thermal_now(void) { return test_thermal; }
+diff --git a/dm/gfx/tests/t_link_ticks.m b/dm/gfx/tests/t_link_ticks.m
+index 2a11acc..788298b 100644
+--- a/dm/gfx/tests/t_link_ticks.m
++++ b/dm/gfx/tests/t_link_ticks.m
+@@ -27,13 +27,15 @@ static int test_clock_gettime(clockid_t clock, struct timespec *t) {
+ #undef DM_GAME_FPS_MAX
+ static int test_fps_max = 120;
+ #define DM_GAME_FPS_MAX test_fps_max
++#define dm_fps_lock_engine test_engine_stub
+ #include "../nvn/hle_nvn.c"
++#undef dm_fps_lock_engine
+ #undef g_ft
+ void *front_metal_layer(void) { return NULL; }
+ module_t *module_of(const void *p) { (void)p; return NULL; }
+ module_t *g_mod; int g_nmod;
+ void svc_thread_dump(void) {}
+-uint64_t now_ns(void) { return bp_now(); }
++uint64_t now_ns(void) { return test_now; }
+ static int checks, failed;
+ #define CHECK(c, label) do { checks++; if (!(c)) { failed++; fprintf(stderr, "FAIL: %s\n", label); } } while (0)
+ // Only the OS wait is replaced: the production wait loop, timeout calculation,
+@@ -66,6 +68,8 @@ static void acquire_ticks(int hz, int display, int interval, double want, const
+     printf("%s: %.2f ticks per acquire (expected %.2f)\n", label, got, want);
+     CHECK(got == want, label);
+ }
++#include "skyrim_fps_fixture.inc"
++
+ // Present snapshots (mtl_snap_on, fixed for the process: run as "t_link_ticks snap"): the acquire takes the display link's wait as without them, the ring slot wait only on top.
+ // It used to wait for a free slot alone, and the link frees slots by dropping frames, so a game ran ahead of its present interval (Donkey Kong Bananza at the 30 fps cap: 43-65 fps).
+ // While the link is stalled the slot time paces instead (no link wait)
+@@ -81,6 +85,7 @@ static int snap_case(void) {
+     printf("t_link_ticks snap: %d checks, %d failed\n", checks, failed); return failed != 0;
+ }
+ int main(int argc, char **argv) { @autoreleasepool {
++    if (argc > 1 && !strcmp(argv[1], "skyrim")) return skyrim_case();
+     if (argc > 1 && !strcmp(argv[1], "snap")) return snap_case();
+     setenv("DM_RT", "0", 1); setenv("DM_PRESENT_SNAP", "0", 1);
+     // Test uncapped display pacing independently of the selected game's default.
+diff --git a/dm/host/hle_fpslock.c b/dm/host/hle_fpslock.c
+index 7c40df2..5234757 100644
+--- a/dm/host/hle_fpslock.c
++++ b/dm/host/hle_fpslock.c
+@@ -13,6 +13,7 @@
+ // the time that passed is left as it is
+ #include "hle.h"
+ #include <mach/mach.h>
++#include <stdatomic.h>
+ 
+ // What a field holds: the frame rate as a float, double or int32, vsyncs per frame (60 / frame rate) as an int32, or the frame time in milliseconds as a float. Copies: consecutive copies of the
+ // value (Unreal keeps one for the game thread, one for the render thread). A row with no pointer (ptr_off 0) has its field at main + field: a constant in main's read-only data, which the loader
+@@ -58,6 +59,80 @@ static const lock_t k_locks[] = {
+ 
+ static int rd(uint64_t a, void *out, size_t n) { vm_size_t got = 0; return a >= 0x1000 && vm_read_overwrite(mach_task_self(), (vm_address_t)a, n, (vm_address_t)out, &got) == KERN_SUCCESS && got == n; }
+ 
++// Skyrim 1.1.404: FPSLocker supplies dynamic-resolution budgets, not a simulation step.
++// Mac and opt-in diagnostic frameworks call begin after preload and before guest entry.
++enum { SKYRIM_MAX_MS = 0x3357fb0, SKYRIM_MIN_MS = 0x3357fc8 };
++static pthread_mutex_t skyrim_mu = PTHREAD_MUTEX_INITIALIZER;
++static _Atomic(uint8_t *) skyrim_image;
++static int skyrim_logged;
++
++void dm_skyrim_fps_end(void) {
++    pthread_mutex_lock(&skyrim_mu);
++    atomic_store(&skyrim_image, NULL);
++    skyrim_logged = 0;
++    pthread_mutex_unlock(&skyrim_mu);
++}
++
++int dm_skyrim_fps_60(void) { return atomic_load(&skyrim_image) != NULL; }
++
++void dm_skyrim_fps_begin(int enabled) {
++    dm_skyrim_fps_end();
++    if (!enabled) return;
++    const char *choice = getenv("DM_SKYRIM_FPS");
++    if (!choice || !strcmp(choice, "30")) return;
++    if (strcmp(choice, "60")) { LOG("[RED] DM_SKYRIM_FPS must be 30 or 60; keeping original pacing"); return; }
++
++    const module_t *main = NULL;
++    int sdk_ok = 0;
++    for (int i = 0; i < g_nmod; i++) {
++        const module_t *m = &g_mod[i];
++        if (!m->loaded || !m->base || m->nro) continue;
++        if (!strcmp(m->name, "main") && !strcmp(m->build_id, "0c0cac3fcf0f0beb9dcf79cb68e30739")) main = m;
++        if (!strcmp(m->name, "sdk") && !strcmp(m->build_id, "2aef2cffb104ee7c9e212fd2f4c731e9")) sdk_ok = 1;
++    }
++    static const struct { uint32_t offset, word; } readers[] = {
++        {0xbe19dc, 0xf945ed08}, {0xbe19e8, 0xbd400902}, {0xbe19f8, 0xf945f129}, {0xbe1a04, 0xbd400920},
++    };
++    if (main && sdk_ok && main->size >= SKYRIM_MIN_MS + 4 && main->text_end >= 0xbe1a08 &&
++        main->text_end <= main->data_off && main->data_off <= SKYRIM_MAX_MS) {
++        unsigned i = 0;
++        for (; i < sizeof readers / sizeof *readers; i++) {
++            uint32_t word;
++            if (!rd((uintptr_t)(main->base + readers[i].offset), &word, sizeof word) || word != readers[i].word) break;
++        }
++        if (i == sizeof readers / sizeof *readers) {
++            atomic_store(&skyrim_image, main->base);
++            LOG("main: Skyrim experimental 60 fps selected for this launch (DM_SKYRIM_FPS)");
++            return;
++        }
++    }
++    LOG("[RED] DM_SKYRIM_FPS=60 needs the verified Skyrim 1.1.404 main and SDK; keeping original pacing");
++}
++
++static void skyrim_resolution_tick(void) {
++    if (!dm_skyrim_fps_60()) return;
++    pthread_mutex_lock(&skyrim_mu);   // pair all reads and writes with the teardown's pointer invalidation
++    uint8_t *image = atomic_load(&skyrim_image);
++    static const uint32_t offsets[] = {SKYRIM_MAX_MS, SKYRIM_MIN_MS};
++    static const float stock[] = {33, 30}, want[] = {16.5f, 15};
++    float cur[2];
++    if (image) {
++        unsigned i = 0;
++        for (; i < 2; i++)
++            if (!rd((uintptr_t)(image + offsets[i]), &cur[i], 4) || (cur[i] != stock[i] && cur[i] != want[i])) break;
++        if (i == 2) for (i = 0; i < 2; i++) if (cur[i] == stock[i]) {
++            uint32_t from, to, *p = (uint32_t *)(image + offsets[i]);
++            memcpy(&from, &stock[i], 4); memcpy(&to, &want[i], 4);
++            dm_guest_write_prepare(p, 4);
++            if (__atomic_compare_exchange_n(p, &from, to, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED) && !skyrim_logged) {
++                LOG("main: Skyrim DRS threshold %.1f → %.1f ms", stock[i], want[i]);
++                skyrim_logged = 1;
++            }
++        }
++    }
++    pthread_mutex_unlock(&skyrim_mu);
++}
++
+ // NieR 1.0.3 exposes its preset minimum but ships fixed mode-specific fallbacks.
+ // Keep the native current-scale and UV controller intact; only select its
+ // verified lower bound. This is independent of the FPS choice.
+@@ -270,6 +345,7 @@ int dm_fps_lock_engine(void) {
+     return nrow || nier || fb.n || uq.base;
+ }
+ void dm_fpslock_teardown(void) {
++    dm_skyrim_fps_end();   // presents drained and guest parked, but its image is still mapped
+     pthread_mutex_lock(&g_fpslock_mu);
+     g_fpslock_found = 0;
+     memset(ue, 0, sizeof ue);
+@@ -294,6 +370,7 @@ void dm_fpslock_teardown(void) {
+ }
+ int nvn_fps_high_now(void);   // hle_nvn.c
+ void dm_fps_lock_tick(void) {
++    skyrim_resolution_tick();
+     dynamic_resolution_tick();   // separate from the FPS cap
+     if (g_fps_tick_state == -1) return;
+     if (g_fps_tick_state == -2) {
+diff --git a/dm/host/main.c b/dm/host/main.c
+index 8c7eccd..5fe6e37 100644
+--- a/dm/host/main.c
++++ b/dm/host/main.c
+@@ -3,6 +3,7 @@
+ #include "front.h"
+ #include "../gfx/nvn/dmsh_chain.h"
+ #include <CoreFoundation/CoreFoundation.h>
++#include <TargetConditionals.h>
+ #include <stdatomic.h>
+ #include <sys/resource.h>
+ #include <sys/sysctl.h>
+@@ -185,6 +186,9 @@ int main(int argc, char **argv) {
+         LOG("host loading already finished early in the background (dm_host_preload_start)");
+     } else host_preload(argc, argv);
+     { void dm_fps_state_apply(void); dm_fps_state_apply(); }   // frame rate and render scale into the frame step state page (loader.c): the iOS launcher sets them after the loading began
++#if TARGET_OS_OSX || defined(DM_SKYRIM_FPS_PROTOTYPE)
++    { void dm_skyrim_fps_begin(int); dm_skyrim_fps_begin(DM_GAME_SKYRIM_FPS_EXPERIMENT && !strcmp(dm_profile()->id, DM_GAME_ID)); }
++#endif
+     front_run(guest_main);
+     return 0;
+ }
+diff --git a/dm/ios/tools/build_ipa.sh b/dm/ios/tools/build_ipa.sh
+index 1221d51..3846968 100755
+--- a/dm/ios/tools/build_ipa.sh
++++ b/dm/ios/tools/build_ipa.sh
+@@ -154,6 +154,11 @@ t "app: $DM_DISPLAY_NAME $DM_APP_VERSION ($DM_BUNDLE_ID), language $DM_LANG$([ $
+ t "generate Gen/ (host sources, embedded modules, tables)"
+ rm -rf Gen && mkdir -p Gen/dm || die "mkdir Gen"
+ python3 tools/gen_build.py "$DM/host" Gen > Gen/dm.xcconfig || die "gen_build"
++SKYRIM_FPS_PROTOTYPE=0
++if [ -n "$FRAMEWORK_ONLY" ] && [ -z "${PROGRAMS_TSV:-}" ] && [ "$GAME" = 01000A10041EA000 ] && [ "$GFXAPI" = nvn ] && [ "${DM_SKYRIM_FPS_PROTOTYPE:-0}" = 1 ]; then
++  SKYRIM_FPS_PROTOTYPE=1
++  printf '%s\n' 'GCC_PREPROCESSOR_DEFINITIONS = $(inherited) DM_SKYRIM_FPS_PROTOTYPE=1' >> Gen/dm.xcconfig || die "diagnostic Skyrim FPS flags"
++fi
+ if [ -n "${PROGRAMS_TSV:-}" ]; then   # each program's modules under its tag (the host is built over a table of the programs' profiles: the first program's profile lists them, game.py header_multi)
+   F=; : > Gen/embed.S
+   while IFS= read -r row; do prog_set "$row"
+@@ -177,7 +182,7 @@ else cp "$GD/shader_map.tsv" "$GD/c1_full.tsv" $TD/ || die "copy shader tables"
+ if [ -f "$GD/pso_manifest.tsv" ]; then cp "$GD/pso_manifest.tsv" $TD/ || die "copy pso_manifest.tsv"
+ else t "no $GD/pso_manifest.tsv: no bundled prewarm seed list"; fi
+ # The launcher's settings for this game (Launcher.swift): dm/games/settings.tsv filtered by the profile, main's rewriter table and the game's languages (dm/games/settings.py)
+-L=$(GFXAPI="$GFXAPI" python3 "$DM/games/settings.py" "$GAME" "$PATCHED" "$VNACP" $TD/launcher.json) || die "launcher settings (dm/games/settings.py)"; t "launcher: $L"
++L=$(GFXAPI="$GFXAPI" SETTINGS_PLATFORM=ios SETTINGS_SKYRIM_FPS_PROTOTYPE="$SKYRIM_FPS_PROTOTYPE" python3 "$DM/games/settings.py" "$GAME" "$PATCHED" "$VNACP" $TD/launcher.json) || die "launcher settings (dm/games/settings.py)"; t "launcher: $L"
+ # The game's control data, which the host answers control-property queries from (hle_fs.c control_read: fs::GetCacheStorageMax); main.m names it in DM_CONTROL_NACP
+ if [ -f "$VNACP" ]; then cp "$VNACP" $TD/control.nacp || die "copy $VNACP"; else t "[RED] no control data at $VNACP: fs::GetCacheStorageMax fails in the app"; fi
+ }
+diff --git a/dm/tools/tests/test_skyrim_settings.py b/dm/tools/tests/test_skyrim_settings.py
+new file mode 100644
+index 0000000..891beae
+--- /dev/null
++++ b/dm/tools/tests/test_skyrim_settings.py
+@@ -0,0 +1,56 @@
++"""Use synthetic rewritten inputs to exercise the actual launcher settings generator."""
++import os
++from pathlib import Path
++import struct
++import sys
++import tempfile
++import unittest
++from unittest.mock import patch
++
++REPO = Path(__file__).resolve().parents[3]
++sys.path.insert(0, str(REPO / 'dm/games'))
++import settings
++
++TITLE = '01000A10041EA000'
++MAIN = '0c0cac3fcf0f0beb9dcf79cb68e30739'
++SDK = '2aef2cffb104ee7c9e212fd2f4c731e9'
++KEY = 'DM_SKYRIM_FPS'
++
++
++class SkyrimSettings(unittest.TestCase):
++    def test_exact_build_and_platform_gate(self):
++        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'GFXAPI': 'nvn', 'SETTINGS_PLATFORM': 'mac', 'SETTINGS_SKYRIM_FPS_PROTOTYPE': '0'}):
++            p = Path(tmp)
++
++            def rows(title=TITLE, **env):
++                with patch.dict(os.environ, env):
++                    return {r['env']: r for r in settings.build(title, p, p / 'missing.nacp')['settings']}
++
++            def ids(main=MAIN, sdk=SDK):
++                (p / 'main.fixups.tsv').write_text(f'# BUILD_ID\t{main}\n# SKYRIM_FPS\t1\n')
++                (p / 'sdk.fixups.tsv').write_text(f'# BUILD_ID\t{sdk}\n')
++
++            self.assertNotIn(KEY, rows())
++            ids()
++            self.assertNotIn(KEY, rows())
++            img = p / 'main.patched.bin'
++            with img.open('wb') as f:
++                for off, word in ((0xbe19dc, 0xf945ed08), (0xbe19e8, 0xbd400902), (0xbe19f8, 0xf945f129), (0xbe1a04, 0xbd400920)):
++                    f.seek(off)
++                    f.write(struct.pack('<I', word))
++            mac = rows()[KEY]
++            self.assertEqual(mac['default'], '30')
++            self.assertEqual([v[0] for v in mac['options']], ['30', '60'])
++            self.assertIn('experimental', mac['options'][1][1])
++            self.assertNotIn(KEY, rows(SETTINGS_PLATFORM='ios'))
++            self.assertEqual(rows(SETTINGS_PLATFORM='ios', SETTINGS_SKYRIM_FPS_PROTOTYPE='1')[KEY], mac)
++            self.assertNotIn(KEY, rows(GFXAPI='vulkan'))
++            self.assertNotIn(KEY, rows(title='010015100B514000'))
++            ids(main='1' + MAIN[1:]); self.assertNotIn(KEY, rows())
++            ids(sdk='1' + SDK[1:]); self.assertNotIn(KEY, rows())
++            (p / 'sdk.fixups.tsv').unlink(); self.assertNotIn(KEY, rows())
++            ids()
++            with img.open('r+b') as f:
++                f.seek(0xbe19dc)
++                f.write(bytes(4))
++            self.assertNotIn(KEY, rows())

@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Aguilar <291639929+alexdev3372@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:54:18 -0800
+Subject: [PATCH] docs: classify the Skyrim build guards
+
+Upstream-Status: fork-only
+Reason: Keep the generated patch index in sync with the guarded cuts and diagnostic pacing path.
+Issue: seedds/nxnative#148
+---
+ dm/games/01000A10041EA000/patches.py | 7 +++++++
+ dm/tools/docs_patches.py             | 5 +++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/dm/games/01000A10041EA000/patches.py b/dm/games/01000A10041EA000/patches.py
+index af545a8..ed4f8e7 100644
+--- a/dm/games/01000A10041EA000/patches.py
++++ b/dm/games/01000A10041EA000/patches.py
+@@ -15,3 +15,10 @@ CUTS = {
+         (0xbf7d5c, 'e3031f2a', 'e303154b', 'Helgen: initialize stencil in mode 7 and preserve the mode-1 depth-only clear'),
+     ],
+ }
++
++BINDING = [
++    {'what': 'reduce two Skyrim heap reservations for the constrained alias window', 'now': 'build', 'goal': 'game', 'purpose': 'address space',
++     'why': 'the game owns these reservations, and the verified layout changes cannot be applied to unmatched constructor sites'},
++    {'what': 'initialize the separate stencil plane during Helgen scene setup', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
++     'why': 'only the verified mode-7 path can use the stencil mask without changing the mode-1 depth-only clear'},
++]
+diff --git a/dm/tools/docs_patches.py b/dm/tools/docs_patches.py
+index 9c4b8ff..427cec2 100644
+--- a/dm/tools/docs_patches.py
++++ b/dm/tools/docs_patches.py
+@@ -68,6 +68,10 @@ def payoff(gap):   # the Gaps order: open gaps, then blocked, kept and unreviewe
+ 
+ # The host's build-keyed rows: (table, the start of the row's label ('' = any), main build ('' = any), entry); the first that fits classifies a row
+ HOST_BINDING = [
++    ('', '', '0c0cac3fcf0f0beb9dcf79cb68e30739', {'what': "Skyrim's experimental present cadence and dynamic-resolution budgets", 'now': 'build', 'goal': 'build', 'purpose': 'frame rate',
++     'why': 'only the exact reader instructions, data locations and original thresholds of this build were verified'}),
++    ('', '', '2aef2cffb104ee7c9e212fd2f4c731e9', {'what': "Skyrim's companion SDK check for experimental 60 fps", 'now': 'build', 'goal': 'build', 'purpose': 'frame rate',
++     'why': 'the experimental path was exercised for this main and SDK pair only'}),
+     ('k_locks', 'RE Engine', '', {'what': "RE Engine's frame limit at a fixed pointer", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
+      'why': 'engine code other RE Engine games ship', 'blocked': 'one RE Engine game here'}),
+     ('k_locks', 'NLG', '', {'what': "Next Level Games' frame limiter target at a fixed address", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
+@@ -130,6 +134,7 @@ SWITCH_BINDING = [
+     ('present_interval', '', {'what': 'one frame per display tick', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': 'right only for games whose logic does not count frames'}),
+     ('fps_hold', '', {'what': 'no frame held past the cap', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': "the game's pacing"}),
+     ('fps_target', '', {'what': 'frame rate target', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': 'a choice per game'}),
++    ('skyrim_fps_experiment', '', {'what': 'experimental 60 fps choice', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': "a per-game opt-in that does not change stock simulation timing"}),
+     ('ue_fps_cvar', '', {'what': "the game's own Unreal frame-limit variable", 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': "the game's own variable, which its settings apply to t.MaxFPS; the rewriter finds it by name (ue_cvar.py)"}),
+     ('perf_mode', '', {'what': 'Boost whatever the operation mode', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': 'a combination a Switch 1 never reports: a choice per game'}),
+     ('launch_param', '', {'what': 'the launch parameter its launcher program passes', 'now': 'game', 'goal': 'game', 'purpose': 'runtime',
