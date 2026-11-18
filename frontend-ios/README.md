@@ -82,6 +82,12 @@ public protocol GameLauncher: Sendable { @MainActor func launch(_ game: Launchab
 
 To disable an offline pipeline archive for one game, set `DM_PSO_BUNDLE=off` in `Documents/games/<title ID>/env.txt`. The shared `Documents/env.txt` can set it for every game. An explicit launch setting wins over both files, then the game's file wins over the shared file. When none sets `DM_PSO_BUNDLE`, the shell uses the game's `pso/` folder, then the framework's `pso/` folder. This override does not diagnose or repair an incompatible archive.
 
+### Asset mods on iPhone and iPad
+
+Unzip a Switch-compatible asset mod or data-only fix in Files. In the game's settings, open **Mods → Manage asset mods… → Import folder from Files…** and select the extracted mod folder. It can contain `romfs/`, loose RomFS assets at their game-relative paths, or an `atmosphere/contents/<title ID>/romfs` or `contents/<title ID>/romfs` tree for this game only. When a valid RomFS wrapper also has an ExeFS sibling, only the RomFS assets are copied. Archives, binary patching, cheat installation and plugin loading are not supported. The app cannot check that an asset is compatible with your game version.
+
+Imports are local copies under `Documents/games/<title ID>/mods/<mod name>/romfs`. The original folder, game data and saves are unchanged. A same-name mod is never overwritten. Switch a mod off to move it to `mods/.disabled/` and back on to restore it. Changes apply on the next launch. Enabled mods keep Finder name order, first match wins. An explicit `DM_ROMFS_OVERLAY` in the game's launch settings or `env.txt` still takes precedence.
+
 Play on a playable game builds a `LaunchableGame` (title ID, name, manifest, bundle folder, framework URL, data folder, the app's `Documents/games/<title ID>/`, every `DM_*` value as a dictionary, the picked cloud-save folder) and calls `launch`. A thrown error is shown as the notice. `StubGameLauncher` only logs and throws `GameLaunchError.notAvailable` ("Launching is not available yet."). Route C's M2 (#144) plugs in the real launcher: it sets the environment from `environment` and the folders (`DM_PROFILE`, `DM_ROMFS`, `DM_SAVE`, `DM_TEMP`, `DM_SAVE_SYNC` from `cloudSavesURL`), `dlopen`s `frameworkURL` and starts the host with the manifest's modules. Nothing else in the host changes: pass it as `launcher:`. The engine and `dm/` are not part of this package.
 
 ### Host mode of the demo

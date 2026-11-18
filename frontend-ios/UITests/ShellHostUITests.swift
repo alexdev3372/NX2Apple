@@ -76,6 +76,52 @@ import XCTest
         XCTAssertEqual(frameRate.value as? String, "1")
     }
 
+    func testModsImportsAndDisablesAnAssetFolder() {
+        openMods(extra: ["--mod-import-fixture"])
+        XCTAssertTrue(app.staticTexts["mods.empty"].waitForExistence(timeout: 5))
+        app.buttons["mods.import"].tap()
+        let toggle = app.switches["mods.enabled.Fixture Textures"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "1")
+        // XCUI exposes the full labeled row. Tap the switch at its trailing edge.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        let disabled = NSPredicate(format: "value == '0'")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: disabled, object: toggle)], timeout: 5), .completed)
+        app.buttons["mods.done"].tap()
+        app.buttons["settings.open"].tap()
+        revealMods()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+    }
+
+    func testModsPresentsFilesAndCancellationReturnsToTheSameGame() {
+        openMods()
+        app.buttons["mods.import"].tap()
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.tap()
+        XCTAssertTrue(app.staticTexts["mods.empty"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["mods.game"].exists)
+        XCTAssertTrue(app.buttons["mods.import"].isEnabled)
+    }
+
+    private func openMods(extra: [String] = []) {
+        XCUIDevice.shared.orientation = .portrait
+        app.launchArguments = ["--host", "--select", "0100000000010000", "--screen", "settings"] + extra
+        app.launch()
+        revealMods()
+    }
+
+    private func revealMods() {
+        let button = app.buttons["set.mods"]
+        let form = app.descendants(matching: .any).matching(identifier: "settings.scroll").firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !button.isHittable { form.swipeUp() }
+        XCTAssertTrue(button.isHittable)
+        button.tap()
+        XCTAssertTrue(app.buttons["mods.import"].waitForExistence(timeout: 5))
+    }
+
     func testStrippedFrameworkWithoutShadersShowsUpdateDataAction() {
         XCUIDevice.shared.orientation = .portrait
         app.launchArguments = ["--host", "--select", "0100000000010000", "--omit-msl", "0100000000010000"]

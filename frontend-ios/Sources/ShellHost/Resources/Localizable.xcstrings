@@ -1153,6 +1153,70 @@
         }
       }
     },
+    "A mod with that name already exists. Rename the folder in Files and try again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Mod mit diesem Namen existiert bereits. Benenne den Ordner in Dateien um und versuche es erneut."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A mod with that name already exists. Rename the folder in Files and try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ya existe un mod con ese nombre. Cambia el nombre de la carpeta en Archivos y vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un mod porte déjà ce nom. Renommez le dossier dans Fichiers et réessayez."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esiste già una mod con questo nome. Rinomina la cartella in File e riprova."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ名前のModがすでにあります。ファイルアプリでフォルダの名前を変更して、もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "같은 이름의 모드가 이미 있습니다. 파일 앱에서 폴더 이름을 바꾼 후 다시 시도하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Já existe um mod com esse nome. Renomeie a pasta no app Arquivos e tente de novo."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det finns redan en modd med det namnet. Byt namn på mappen i Filer och försök igen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有同名模组。请在“文件”中重命名该文件夹后重试。"
+          }
+        }
+      }
+    },
     "Another device": {
       "localizations": {
         "de": {
@@ -1213,6 +1277,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "另一台设备"
+          }
+        }
+      }
+    },
+    "Asset mods": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asset-Mods"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asset mods"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mods de recursos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mods de ressources"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mod di risorse"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アセットMod"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에셋 모드"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mods de recursos"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resursmoddar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "资源模组"
           }
         }
       }
@@ -1341,6 +1469,134 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消"
+          }
+        }
+      }
+    },
+    "Changes apply the next time you play. If enabled mods replace the same file, the first by name wins.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Änderungen gelten beim nächsten Spielstart. Ersetzen aktive Mods dieselbe Datei, hat der erste nach Namenssortierung Vorrang."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes apply the next time you play. If enabled mods replace the same file, the first by name wins."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los cambios se aplican la próxima vez que juegues. Si varios mods activos reemplazan el mismo archivo, se usa el primero por nombre."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les changements s’appliquent au prochain lancement. Si plusieurs mods actifs remplacent le même fichier, le premier par ordre de nom est prioritaire."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le modifiche si applicano al prossimo avvio. Se più mod attive sostituiscono lo stesso file, ha priorità la prima in ordine di nome."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更は次回起動時に適用されます。有効なModが同じファイルを置き換える場合、名前順で最初のものが優先されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "변경 사항은 다음 게임 실행 시 적용됩니다. 활성화된 모드가 같은 파일을 교체하면 이름순으로 첫 번째 모드가 우선합니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As alterações valem na próxima vez que você jogar. Se mods ativos substituírem o mesmo arquivo, vale o primeiro por ordem de nome."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ändringarna gäller nästa gång du spelar. Om flera aktiva moddar ersätter samma fil används den första i namnordning."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改将在下次启动游戏时生效。如果多个已启用的模组替换同一文件，则按名称排序使用第一个。"
+          }
+        }
+      }
+    },
+    "Choose an extracted folder with RomFS assets for this game. Code patches and plugins are not supported.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle einen entpackten Ordner mit RomFS-Dateien für dieses Spiel. Code-Patches und Plugins werden nicht unterstützt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an extracted folder with RomFS assets for this game. Code patches and plugins are not supported."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elige una carpeta descomprimida con recursos RomFS para este juego. No se admiten parches de código ni complementos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez un dossier décompressé contenant des ressources RomFS pour ce jeu. Les correctifs de code et modules ne sont pas pris en charge."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scegli una cartella estratta con risorse RomFS per questo gioco. Le patch di codice e i plugin non sono supportati."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このゲームのRomFSアセットが入った解凍済みフォルダを選んでください。コードパッチやプラグインには対応していません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 게임의 RomFS 에셋이 들어 있는 압축 해제된 폴더를 선택하세요. 코드 패치와 플러그인은 지원하지 않습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escolha uma pasta descompactada com recursos RomFS para este jogo. Patches de código e plugins não são compatíveis."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Välj en uppackad mapp med RomFS-resurser för det här spelet. Kodpatchar och insticksprogram stöds inte."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择已解压且包含此游戏 RomFS 资源的文件夹。不支持代码补丁和插件。"
           }
         }
       }
@@ -2113,6 +2369,70 @@
         }
       }
     },
+    "Import folder from Files…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner aus Dateien importieren…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import folder from Files…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar carpeta desde Archivos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer un dossier depuis Fichiers…"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importa cartella da File…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルからフォルダを読み込む…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "파일 앱에서 폴더 가져오기…"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar pasta do app Arquivos…"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importera mapp från Filer…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从“文件”导入文件夹…"
+          }
+        }
+      }
+    },
     "Joining .nxpart split files in this app's folder (%@ of %@).": {
       "localizations": {
         "de": {
@@ -2685,6 +3005,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "无附加内容"
+          }
+        }
+      }
+    },
+    "No asset mods installed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Asset-Mods installiert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No asset mods installed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No hay mods de recursos instalados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun mod de ressources installé."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessuna mod di risorse installata."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "インストール済みのアセットModはありません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설치된 에셋 모드가 없습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhum mod de recursos instalado."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inga resursmoddar har installerats."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未安装资源模组。"
           }
         }
       }
@@ -4417,6 +4801,134 @@
         }
       }
     },
+    "The folder could not be opened. Check that it is available in Files and try again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ordner konnte nicht geöffnet werden. Prüfe, ob er in Dateien verfügbar ist, und versuche es erneut."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The folder could not be opened. Check that it is available in Files and try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo abrir la carpeta. Comprueba que esté disponible en Archivos y vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’ouvrir le dossier. Vérifiez qu’il est disponible dans Fichiers et réessayez."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile aprire la cartella. Verifica che sia disponibile in File e riprova."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダを開けませんでした。ファイルアプリで利用できることを確認して、もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더를 열 수 없습니다. 파일 앱에서 사용할 수 있는지 확인한 후 다시 시도하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível abrir a pasta. Verifique se está disponível no app Arquivos e tente de novo."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappen gick inte att öppna. Kontrollera att den finns tillgänglig i Filer och försök igen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法打开文件夹。请确认可在“文件”中访问该文件夹后重试。"
+          }
+        }
+      }
+    },
+    "The folder does not target only this game.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ordner ist nicht ausschließlich für dieses Spiel bestimmt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The folder does not target only this game."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta no está destinada exclusivamente a este juego."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce dossier n’est pas destiné uniquement à ce jeu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La cartella non è destinata esclusivamente a questo gioco."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このゲーム専用のフォルダではありません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 게임만을 대상으로 하는 폴더가 아닙니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A pasta não se destina exclusivamente a este jogo."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappen är inte avsedd enbart för det här spelet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此文件夹并非仅适用于此游戏。"
+          }
+        }
+      }
+    },
     "The folder is named %@ but the manifest says %@.": {
       "localizations": {
         "de": {
@@ -4477,6 +4989,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "文件夹名为 %@，但清单显示 %@。"
+          }
+        }
+      }
+    },
+    "The folder is too large or too deeply nested to import.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ordner ist zu groß oder zu tief verschachtelt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The folder is too large or too deeply nested to import."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta es demasiado grande o contiene demasiados niveles de subcarpetas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier est trop volumineux ou comporte trop de niveaux de sous-dossiers."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La cartella è troppo grande o contiene troppi livelli di sottocartelle."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダが大きすぎるか、階層が深すぎます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더가 너무 크거나 하위 폴더의 깊이가 너무 깊습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A pasta é grande demais ou tem níveis demais de subpastas."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappen är för stor eller har för många nivåer av undermappar."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件夹过大或子文件夹嵌套过深，无法导入。"
           }
         }
       }
@@ -4993,6 +5569,70 @@
         }
       }
     },
+    "The mod could not be saved. Check the folder and available device storage, then try again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Mod konnte nicht gespeichert werden. Prüfe den Ordner und den freien Speicherplatz und versuche es erneut."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The mod could not be saved. Check the folder and available device storage, then try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar el mod. Comprueba la carpeta y el espacio libre del dispositivo y vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’enregistrer le mod. Vérifiez le dossier et l’espace disponible, puis réessayez."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile salvare la mod. Controlla la cartella e lo spazio disponibile, poi riprova."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modを保存できませんでした。フォルダと端末の空き容量を確認して、もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모드를 저장할 수 없습니다. 폴더와 기기의 여유 공간을 확인한 후 다시 시도하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível salvar o mod. Verifique a pasta e o espaço disponível no dispositivo e tente de novo."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modden gick inte att spara. Kontrollera mappen och det lediga lagringsutrymmet och försök igen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存模组。请检查文件夹和设备的可用存储空间后重试。"
+          }
+        }
+      }
+    },
     "The save backup could not be restored.": {
       "localizations": {
         "de": {
@@ -5373,6 +6013,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "本 App 的文件夹中还没有此游戏的数据。请拷贝到 games/%@，或点「使用应用数据」。"
+          }
+        }
+      }
+    },
+    "This folder has an unsafe name, link or file type.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Ordner enthält einen unsicheren Namen, Link oder Dateityp."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This folder has an unsafe name, link or file type."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta carpeta contiene un nombre, enlace o tipo de archivo no seguro."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce dossier contient un nom, un lien ou un type de fichier non sûr."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La cartella contiene un nome, un collegamento o un tipo di file non sicuro."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダに安全でない名前、リンク、またはファイル形式が含まれています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더에 안전하지 않은 이름, 링크 또는 파일 형식이 있습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta pasta contém um nome, link ou tipo de arquivo inseguro."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappen innehåller ett osäkert namn, en osäker länk eller en osäker filtyp."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此文件夹包含不安全的名称、链接或文件类型。"
           }
         }
       }
@@ -6269,6 +6973,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "未保存的进度将会丢失。你将返回游戏库。"
+          }
+        }
+      }
+    },
+    "Unzip the mod in Files first. Choose a Switch RomFS asset folder, not a code patch or plugin.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entpacke den Mod zuerst in Dateien. Wähle einen Switch-RomFS-Ordner, keinen Code-Patch und kein Plugin."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unzip the mod in Files first. Choose a Switch RomFS asset folder, not a code patch or plugin."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descomprime el mod en Archivos. Elige una carpeta con recursos RomFS de Switch, no un parche de código ni un complemento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décompressez d’abord le mod dans Fichiers. Choisissez un dossier de ressources RomFS pour Switch, pas un correctif de code ni un module."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estrai prima la mod in File. Scegli una cartella di risorse RomFS per Switch, non una patch di codice o un plugin."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先にファイルアプリでModを解凍します。コードパッチやプラグインではなく、Switch用のRomFSアセットフォルダを選んでください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 파일 앱에서 모드의 압축을 풉니다. 코드 패치나 플러그인이 아닌 Switch RomFS 에셋 폴더를 선택하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descompacte o mod no app Arquivos. Escolha uma pasta de recursos RomFS do Switch, não um patch de código ou plugin."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Packa först upp modden i Filer. Välj en Switch-mapp med RomFS-resurser, inte en kodpatch eller ett insticksprogram."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在“文件”中解压模组。选择包含 Switch RomFS 资源的文件夹，而不是代码补丁或插件。"
           }
         }
       }

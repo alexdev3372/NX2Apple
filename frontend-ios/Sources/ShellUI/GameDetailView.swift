@@ -78,6 +78,15 @@ public struct GameDetailView: View {
                 }
             }
         }
+        if let manage = actions.onManageMods {
+            group(ShellStrings.text("Mods")) {
+                Button { manage(detail.id) } label: {
+                    Label(ShellStrings.text("Manage asset mods…"), systemImage: "folder.badge.gearshape")
+                }
+                .accessibilityIdentifier("set.mods")
+                .shellTarget("set.mods") { manage(detail.id) }
+            }
+        }
         group(ShellStrings.text("Game data")) {
             SourceRow(symbol: "folder",
                       title: detail.dataSource.isEmpty ? ShellStrings.text("No data selected") : detail.dataSource,

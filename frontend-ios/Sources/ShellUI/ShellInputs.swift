@@ -277,6 +277,8 @@ public struct ShellActions {
     public var onChange: (_ gameID: String, _ settingID: String, _ value: String) -> Void
     public var onPickGameData: (String) -> Void
     public var onUseAppData: (String) -> Void
+    /// Opens the host's per-game RomFS mod manager, when available.
+    public var onManageMods: ((String) -> Void)?
     public var onPickCloudSaves: (String) -> Void
     public var onDisableCloudSaves: (String) -> Void
     public var onResetDefaults: (String) -> Void
@@ -312,6 +314,7 @@ public struct ShellActions {
     public init(onSelect: @escaping (String) -> Void = { _ in }, onPlay: @escaping (String) -> Void = { _ in },
                 onChange: @escaping (String, String, String) -> Void = { _, _, _ in },
                 onPickGameData: @escaping (String) -> Void = { _ in }, onUseAppData: @escaping (String) -> Void = { _ in },
+                onManageMods: ((String) -> Void)? = nil,
                 onPickCloudSaves: @escaping (String) -> Void = { _ in }, onDisableCloudSaves: @escaping (String) -> Void = { _ in },
                 onResetDefaults: @escaping (String) -> Void = { _ in }, onShowLog: @escaping (String) -> Void = { _ in },
                 onAppUpdate: @escaping () -> Void = {}, onBack: @escaping () -> Void = {},
@@ -331,6 +334,7 @@ public struct ShellActions {
         self.onChange = onChange
         self.onPickGameData = onPickGameData
         self.onUseAppData = onUseAppData
+        self.onManageMods = onManageMods
         self.onPickCloudSaves = onPickCloudSaves
         self.onDisableCloudSaves = onDisableCloudSaves
         self.onResetDefaults = onResetDefaults

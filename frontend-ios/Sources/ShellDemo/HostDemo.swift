@@ -49,7 +49,17 @@ struct HostDemoScreen: View {
                                      updateURL: URL(string: "https://github.com/LNPANDY/NX2Apple/releases"),
                                      defaults: { UserDefaults(suiteName: suite + $0) ?? .standard })
         #if canImport(UIKit)
-        _model = State(initialValue: ShellHostModel(config: config, picker: DocumentFolderPicker()))
+        let picker: any FolderPicker
+        if args.contains("--mod-import-fixture") {
+            let fixture = appData.deletingLastPathComponent().appendingPathComponent("Shell Demo Mod Fixture/Fixture Textures")
+            let payload = fixture.appendingPathComponent("romfs/Data")
+            try? fm.createDirectory(at: payload, withIntermediateDirectories: true)
+            try? Data("fixture".utf8).write(to: payload.appendingPathComponent("texture.bin"))
+            picker = DemoModFolderPicker(folder: fixture)
+        } else {
+            picker = DocumentFolderPicker()
+        }
+        _model = State(initialValue: ShellHostModel(config: config, picker: picker))
         #else
         _model = State(initialValue: ShellHostModel(config: config))
         #endif
@@ -64,4 +74,10 @@ struct HostDemoScreen: View {
             .flatMap { ProcessInfo.processInfo.arguments.indices.contains($0 + 1) ? ProcessInfo.processInfo.arguments[$0 + 1] : nil } == "settings")
             .background(ShellPalette.background)
     }
+}
+
+/// The test app supplies a synthetic selection without changing the production Files picker.
+private struct DemoModFolderPicker: FolderPicker {
+    let folder: URL
+    func pickFolder() async -> URL? { folder }
 }

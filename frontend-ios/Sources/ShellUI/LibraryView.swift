@@ -278,6 +278,12 @@ public struct LibraryView: View {
         routed.onShowLog = { id in handOffMenu { actions.onShowLog(id) } }
         routed.onAppUpdate = { handOffMenu { actions.onAppUpdate() } }
         routed.onRestoreSaveBackup = { id in handOffMenu { actions.onRestoreSaveBackup(id) } }
+        if let manage = actions.onManageMods {
+            routed.onManageMods = { id in
+                guard noteTouch() else { return }
+                handOffMenu { manage(id) }
+            }
+        }
         return routed
     }
 

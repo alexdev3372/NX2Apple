@@ -206,6 +206,14 @@ import Testing
         #expect(env["DM_ENV_FILE_KEYS"] == "", "the mods folder is not an env file")
     }
 
+    @Test func legacyLooseAssetsStayVisibleAlongsideAnUnusedExeFSFolder() throws {
+        let rig = try Rig()
+        let mods = rig.gdir.appendingPathComponent("mods")
+        try rig.box.write("texture", to: mods.appendingPathComponent("legacy/Data/texture.bin"))
+        try rig.box.makeFolder(mods.appendingPathComponent("legacy/exefs"))
+        #expect(rig.plan().environment["DM_ROMFS_OVERLAY"] == mods.path + "/legacy")
+    }
+
     @Test func modsOfOneGameDoNotReachAnother() throws {
         let rig = try Rig()
         try rig.box.makeFolder(rig.gdir.appendingPathComponent("mods/m/romfs"))

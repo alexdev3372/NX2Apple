@@ -52,6 +52,9 @@ public struct ShellHostView: View {
                 .presentationBackground(ShellPalette.background)
             }
             .sheet(item: $model.log) { LogView(log: $0) }
+            .sheet(item: $model.modGame) { game in
+                GameModManagerView(game: game, model: model)
+            }
             .alert(Text(verbatim: hostText("NX2Apple")), isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
                 Button(hostText("OK")) { model.notice = nil }
             } message: { Text(model.notice ?? "") }

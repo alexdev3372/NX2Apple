@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// A game's mods (#557): folders in `Documents/games/<title ID>/mods/`, each holding RomFS files that replace the game's own
@@ -8,19 +9,37 @@ import Foundation
 public enum GameMods {
     /// The RomFS folder of each usable mod, in name order (Finder order).
     public static func romfsFolders(in mods: URL, titleID: String, _ fm: FileManager = .default) -> [String] {
-        let names = ((try? fm.contentsOfDirectory(atPath: mods.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
+        entries(in: mods, titleID: titleID, fm).map(\.path)
+    }
+
+    static func entries(in mods: URL, titleID: String, _ fm: FileManager = .default) -> [(name: String, path: String)] {
+        guard GameModStore.validTitle(titleID), !mods.path.contains(":"),
+              isDirectory(mods), isDirectory(mods.deletingLastPathComponent()) else { return [] }
+        let names = ((try? fm.contentsOfDirectory(atPath: mods.path)) ?? []).filter(GameModStore.safeName).sorted {
+            let order = $0.localizedStandardCompare($1)
+            return order == .orderedSame ? $0.utf8.lexicographicallyPrecedes($1.utf8) : order == .orderedAscending
         }
         return names.compactMap { name in
-            var dir: ObjCBool = false
             let mod = mods.appendingPathComponent(name)
-            guard fm.fileExists(atPath: mod.path, isDirectory: &dir), dir.boolValue else { return nil }
-            let candidates = ["romfs", "atmosphere/contents/\(titleID)/romfs", "contents/\(titleID)/romfs"].map { mod.appendingPathComponent($0).path }
-            if let found = candidates.first(where: { fm.fileExists(atPath: $0) }) { return found }
-            let top = ((try? fm.contentsOfDirectory(atPath: mod.path)) ?? []).filter { !$0.hasPrefix(".") }
-            let codeOnly = !top.isEmpty && top.allSatisfy { ["exefs", "atmosphere", "contents"].contains($0.lowercased()) }
-            return codeOnly || top.isEmpty ? nil : mod.path
+            guard isDirectory(mod) else { return nil }
+            let candidates = [["romfs"], ["atmosphere", "contents", titleID, "romfs"], ["contents", titleID, "romfs"]]
+            for components in candidates {
+                if let folder = components.reduce(Optional(mod), { parent, component in
+                    guard let child = parent?.appendingPathComponent(component), isDirectory(child) else { return nil }
+                    return child
+                }) { return (name, folder.path) }
+            }
+            let top = ((try? fm.contentsOfDirectory(atPath: mod.path)) ?? []).filter(GameModStore.safeName).map { $0.lowercased() }
+            let wrappers = ["exefs", "atmosphere", "contents", "exefs_patches", "romfs_patches", "cheats"]
+            // The loose legacy format can have other directories next to ExeFS. A broken explicit RomFS root must not
+            // be reinterpreted as loose data, especially if it is a link.
+            return top.contains("romfs") || top.allSatisfy(wrappers.contains) ? nil : (name, mod.path)
         }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0 && info.st_mode & S_IFMT == S_IFDIR
     }
 
     /// The `DM_ROMFS_OVERLAY` value for the usable mods, or nil when the folder is missing or holds none. Where two mods

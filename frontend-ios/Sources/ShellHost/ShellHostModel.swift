@@ -118,6 +118,7 @@ public struct ShellHostConfig: Sendable {
     public var notice: String?
     /// The log the host view shows in a read-only sheet.
     public var log: LogPresentation?
+    var modGame: GameTile?
     /// Play is preparing the game's resources or handing over to the engine.
     public private(set) var launchingGame = false
     /// Pure-black transition overlay active while resolving/switching/launching a deep link.
@@ -141,6 +142,7 @@ public struct ShellHostConfig: Sendable {
     @ObservationIgnored private let config: ShellHostConfig
     @ObservationIgnored private let launcher: any GameLauncher
     @ObservationIgnored private let picker: any FolderPicker
+    @ObservationIgnored let modStore: GameModStore
     @ObservationIgnored private let adapter = GamepadAdapter()
     @ObservationIgnored private var dataStores: [String: BookmarkStore] = [:]
     @ObservationIgnored private var cloudStores: [String: BookmarkStore] = [:]
@@ -186,6 +188,7 @@ public struct ShellHostConfig: Sendable {
         self.config = config
         self.launcher = launcher
         self.picker = picker
+        self.modStore = GameModStore(appDataRoot: config.appDataRoot)
         self.shellSettings = shellSettings
         shellData = BookmarkStore(defaults: shellSettings.defaults, key: ShellSettingsStore.dataFolderKey)
         shellCloud = BookmarkStore(defaults: shellSettings.defaults, key: ShellSettingsStore.cloudSavesKey)
@@ -727,6 +730,7 @@ public struct ShellHostConfig: Sendable {
             onChange: { [weak self] id, setting, value in self?.change(id, setting: setting, value: value) },
             onPickGameData: { [weak self] id in self?.pickGameData(id) },
             onUseAppData: { [weak self] id in self?.useAppData(id) },
+            onManageMods: modManagerAction,
             onPickCloudSaves: { [weak self] id in self?.pickCloudSaves(id) },
             onDisableCloudSaves: { [weak self] id in self?.disableCloudSaves(id) },
             onResetDefaults: { [weak self] id in self?.resetDefaults(id) },
@@ -754,6 +758,31 @@ public struct ShellHostConfig: Sendable {
                 guard let self else { return false }
                 return await self.saveIconAndOpenShortcuts(for: id)
             })
+    }
+
+    private var modManagerAction: ((String) -> Void)? {
+        #if canImport(UIKit)
+        { [weak self] id in self?.manageMods(id) }
+        #else
+        nil
+        #endif
+    }
+
+    private func manageMods(_ id: String) {
+        guard !launchingGame, !isDeepLinkLaunching, cloudConflict == nil,
+              entry(id)?.manifest != nil, GameModStore.validTitle(id) else { return }
+        modGame = details.first { $0.id == id }?.game
+    }
+
+    func importMod(for id: String) async throws {
+        guard modGame?.id == id else { return }
+        switch await picker.pickFolderOutcome() {
+        case .picked(let url):
+            guard modGame?.id == id else { return }
+            try await modStore.install(url, for: id)
+        case .cancelled: break
+        case .unavailable: throw GameModStore.Failure.unavailable
+        }
     }
 
     public func change(_ id: String, setting: String, value: String) {
@@ -985,6 +1014,12 @@ public struct ShellHostConfig: Sendable {
     @discardableResult
     public func handleDeepLink(_ url: URL) -> Bool {
         guard DeepLinkRouter.isLaunchURL(url) else { return false }
+        if modGame != nil {
+            if let errorURL = DeepLinkRouter.extractErrorCallback(from: url) {
+                config.openURL(DeepLinkRouter.errorCallbackURL(base: errorURL, message: hostText("Launch cancelled.")))
+            }
+            return true
+        }
         guard let request = DeepLinkRouter.parse(url) else {
             let message = hostText("No game was specified in the shortcut link.")
             if let errorURL = DeepLinkRouter.extractErrorCallback(from: url) {
@@ -1183,7 +1218,7 @@ public struct ShellHostConfig: Sendable {
     }
 
     private func playInternal(_ id: String, suppressErrorNotice: Bool) async -> LaunchOutcome {
-        guard !launchingGame, cloudConflict == nil,
+        guard !launchingGame, cloudConflict == nil, modGame == nil,
               let entry = entry(id), let manifest = entry.manifest, let framework = entry.frameworkURL,
               details.first(where: { $0.id == id })?.game.state == .playable else {
             return .failed(nil)
